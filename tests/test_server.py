@@ -378,6 +378,54 @@ async def test_delete_requires_matching_explicit_confirmation(client):
     assert response.status == 400
 
 
+async def test_delete_returns_progress_before_completion_and_conflicts_with_second_delete(client, monkeypatch):
+    http, controller = client
+    deleting, release = asyncio.Event(), asyncio.Event()
+
+    class Adb:
+        async def run(self, *args, **kwargs):
+            return b"clip.mp4\x004\x001.0\x00"
+
+    class Tone:
+        def __init__(self):
+            self.events = []
+
+        def success(self):
+            self.events.append("success")
+
+        def failure(self):
+            self.events.append("failure")
+
+    async def held_delete(adb, entry, folder, name, progress=None):
+        assert entry.name == "clip.mp4" and name == "clip.mp4"
+        progress("checking")
+        progress("deleting")
+        deleting.set()
+        await release.wait()
+        progress("verifying")
+        progress("verified")
+
+    monkeypatch.setattr("oc_remote.server.delete_one", held_delete)
+    controller.adb, controller.tone = Adb(), Tone()
+    body = {"name": "clip.mp4", "confirmed_name": "clip.mp4"}
+    response = await http.post("/api/delete", json=body, headers=auth(http))
+    assert response.status == 202
+    await asyncio.wait_for(deleting.wait(), 1)
+    progress = await (await http.get("/api/file-operation")).json()
+    assert progress["kind"] == "delete" and progress["stage"] == "deleting"
+    assert progress["running"] is True and progress["id"]
+    second = await http.post("/api/delete", json=body, headers=auth(http))
+    assert second.status == 409
+    release.set()
+    for _ in range(100):
+        progress = await (await http.get("/api/file-operation")).json()
+        if not progress["running"]:
+            break
+        await asyncio.sleep(0.001)
+    assert progress["stage"] == "verified"
+    assert controller.tone.events == ["success"]
+
+
 async def test_move_rejects_relative_destination_without_starting_transfer(client):
     http, controller = client
     response = await http.post("/api/move", json={
@@ -399,12 +447,23 @@ async def test_malformed_media_index_is_reported_as_uncertain(client):
             return b"clip.mp4\x004\x001.0\x00"
 
     class FakeTone:
+        def __init__(self):
+            self.events = []
+
         def failure(self):
-            pass
+            self.events.append("failure")
 
     controller.adb = FakeAdb()
     controller.tone = FakeTone()
     response = await http.post("/api/delete", json={
         "folder": "/sdcard/DCIM/OpenCamera", "name": "clip.mp4", "confirmed_name": "clip.mp4",
     }, headers=auth(http))
-    assert response.status == 409
+    assert response.status == 202
+    for _ in range(100):
+        progress = await (await http.get("/api/file-operation")).json()
+        if not progress["running"]:
+            break
+        await asyncio.sleep(0.001)
+    assert progress["stage"] == "uncertain"
+    assert progress["outcome"] == "uncertain"
+    assert controller.tone.events == ["failure"]

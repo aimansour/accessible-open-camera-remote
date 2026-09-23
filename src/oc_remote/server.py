@@ -21,6 +21,7 @@ SESSION_TOKEN_KEY = web.AppKey("session_token", str)
 CAMERA_TASKS_KEY = web.AppKey("camera_tasks", set)
 TRANSFER_TASKS_KEY = web.AppKey("transfer_tasks", set)
 TRANSFER_JOB_KEY = web.AppKey("transfer_job", dict)
+FILE_JOB_KEY = web.AppKey("file_job", dict)
 VERIFIED_CATALOG_KEY = web.AppKey("verified_catalog", dict)
 FILE_LOCK_KEY = web.AppKey("file_lock", asyncio.Lock)
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -53,6 +54,8 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
     app[CAMERA_TASKS_KEY] = set()
     app[TRANSFER_TASKS_KEY] = set()
     app[TRANSFER_JOB_KEY] = {"total": 0, "stages": {}, "results": [], "running": False, "completed": 0}
+    app[FILE_JOB_KEY] = {"id": None, "kind": None, "stage": None, "running": False,
+                         "outcome": None, "message": ""}
     app[VERIFIED_CATALOG_KEY] = {}
     app[FILE_LOCK_KEY] = asyncio.Lock()
 
@@ -115,6 +118,10 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
     async def transfers(request):
         require_local_host(request)
         return web.json_response(app[TRANSFER_JOB_KEY])
+
+    async def file_operation(request):
+        require_local_host(request)
+        return web.json_response(app[FILE_JOB_KEY])
 
     async def post_copy(request):
         require_local_origin_and_token(request)
@@ -224,9 +231,10 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
 
     async def post_delete(request):
         require_local_origin_and_token(request)
-        if app[TRANSFER_JOB_KEY]["running"]:
-            raise web.HTTPConflict(text="A transfer is running")
-        async with app[FILE_LOCK_KEY]:
+        if app[TRANSFER_JOB_KEY]["running"] or app[FILE_LOCK_KEY].locked():
+            raise web.HTTPConflict(text="A file operation is already running")
+        await app[FILE_LOCK_KEY].acquire()
+        try:
             require_idle_for_mutation()
             try:
                 payload = await request.json()
@@ -239,16 +247,49 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
                 raise web.HTTPBadRequest(text="Confirm the exact selected video name")
             entry = await selected_entry(folder, name)
             require_idle_for_mutation()
+        except BaseException:
+            app[FILE_LOCK_KEY].release()
+            raise
+
+        job = app[FILE_JOB_KEY]
+        job.update({"id": uuid4().hex, "kind": "delete", "stage": "checking", "running": True,
+                    "outcome": None, "message": "Checking the selected video"})
+
+        def progress(stage: str) -> None:
+            job["stage"] = stage
+            job["message"] = {
+                "checking": "Checking the selected video",
+                "deleting": "Deleting from the phone",
+                "verifying": "Checking phone file and Android media index",
+                "verified": "Deletion verified",
+                "uncertain": "Deletion result uncertain; inspect the phone",
+            }[stage]
+
+        async def perform_delete():
             try:
-                await delete_one(controller.adb, entry, folder, confirmed_name)
+                await delete_one(controller.adb, entry, folder, confirmed_name, progress=progress)
+                job["outcome"] = "verified"
+                app[VERIFIED_CATALOG_KEY].pop(folder, None)
+                controller.tone.success()
+                record("delete_verified")
             except (UncertainMutation, MediaIndexError, AdbFailure):
+                progress("uncertain")
+                job["outcome"] = "uncertain"
                 controller.tone.failure()
                 record("delete_uncertain")
-                raise web.HTTPConflict(text="Deletion result uncertain; inspect the phone")
-            app[VERIFIED_CATALOG_KEY].pop(folder, None)
-            controller.tone.success()
-            record("delete_verified")
-            return web.json_response({"deleted": name})
+            except Exception:
+                progress("uncertain")
+                job["outcome"] = "uncertain"
+                controller.tone.failure()
+                record("delete_uncertain")
+            finally:
+                job["running"] = False
+                app[FILE_LOCK_KEY].release()
+
+        task = asyncio.create_task(perform_delete())
+        app[TRANSFER_TASKS_KEY].add(task)
+        task.add_done_callback(app[TRANSFER_TASKS_KEY].discard)
+        return web.json_response({"accepted": True, "id": job["id"]}, status=202)
 
     async def post_move(request):
         require_local_origin_and_token(request)
@@ -342,6 +383,7 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
     app.router.add_get("/api/status", status)
     app.router.add_get("/api/videos", videos)
     app.router.add_get("/api/transfers", transfers)
+    app.router.add_get("/api/file-operation", file_operation)
     app.router.add_post("/api/copy", post_copy)
     app.router.add_post("/api/move", post_move)
     app.router.add_post("/api/rename", post_rename)

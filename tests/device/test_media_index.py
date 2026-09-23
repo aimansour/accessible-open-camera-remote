@@ -13,7 +13,7 @@ import pytest
 
 from oc_remote.adb import AdbClient
 from oc_remote.catalog import DEFAULT_PHONE_FOLDER, list_videos
-from oc_remote.files import delete_one, media_path, query_media_row, rename_one
+from oc_remote.files import delete_one, media_path, query_media_row, remote_exists, rename_one
 
 
 @pytest.mark.skipif(os.getenv("OC_DEVICE_TEST") != "1", reason="device test is opt-in")
@@ -59,8 +59,11 @@ async def test_rename_and_delete_update_android_media_index(tmp_path):
         assert await query_media_row(adb, DEFAULT_PHONE_FOLDER, renamed_name) is not None
         print("Test video rename exists in both filesystem and MediaStore")
 
-        await delete_one(adb, renamed, DEFAULT_PHONE_FOLDER, renamed_name)
+        stages = []
+        await delete_one(adb, renamed, DEFAULT_PHONE_FOLDER, renamed_name, progress=stages.append)
+        assert stages == ["checking", "deleting", "verifying", "verified"]
         assert await query_media_row(adb, DEFAULT_PHONE_FOLDER, renamed_name) is None
+        assert not await remote_exists(adb, f"{DEFAULT_PHONE_FOLDER}/{renamed_name}")
         assert all(item.name != renamed_name for item in await list_videos(adb, DEFAULT_PHONE_FOLDER))
         print("Test video deletion is absent from both filesystem and MediaStore")
     finally:

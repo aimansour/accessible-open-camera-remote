@@ -6,7 +6,7 @@ import pytest
 from oc_remote.adb import AdbFailure
 from oc_remote.catalog import VideoEntry
 from oc_remote.files import (
-    UncertainMutation, delete_one, move_one, query_media_row, rename_one,
+    UncertainMutation, delete_one, move_one, query_media_row, remote_exists, rename_one,
     verify_media_index,
 )
 from oc_remote.transfer import TransferResult
@@ -29,6 +29,9 @@ class FakeAdb:
         if self.fail:
             raise AdbFailure("offline")
         if "find" in args:
+            if "-name" in args:
+                name = shlex.split(args[args.index("-name") + 1])[0]
+                return f"{name}\0".encode() if name in self.files else b""
             if "0" in args and "-maxdepth" in args:
                 path = shlex.split(args[3])[0]
                 name = path.rsplit("/", 1)[-1]
@@ -121,17 +124,30 @@ async def test_delete_requires_exact_filename_confirmation(adb, confirmation):
 
 
 async def test_delete_removes_file_and_media_row(adb):
-    await delete_one(adb, VideoEntry("a.mp4", 4, 1.0), FOLDER, "a.mp4")
+    stages = []
+    await delete_one(adb, VideoEntry("a.mp4", 4, 1.0), FOLDER, "a.mp4", progress=stages.append)
     assert adb.files == {} and adb.media == {}
     assert adb.removed == ["a.mp4"]
+    assert stages == ["checking", "deleting", "verifying", "verified"]
+
+
+async def test_remote_exists_distinguishes_absent_file_from_adb_failure(adb):
+    assert await remote_exists(adb, FOLDER + "/a.mp4")
+    adb.files.clear()
+    assert not await remote_exists(adb, FOLDER + "/a.mp4")
+    adb.fail = True
+    with pytest.raises(AdbFailure):
+        await remote_exists(adb, FOLDER + "/a.mp4")
 
 
 async def test_silent_noop_mutations_are_uncertain(adb):
     adb.skip_mutation = True
     with pytest.raises(UncertainMutation):
         await rename_one(adb, VideoEntry("a.mp4", 4, 1.0), FOLDER, "b")
+    stages = []
     with pytest.raises(UncertainMutation):
-        await delete_one(adb, VideoEntry("a.mp4", 4, 1.0), FOLDER, "a.mp4")
+        await delete_one(adb, VideoEntry("a.mp4", 4, 1.0), FOLDER, "a.mp4", progress=stages.append)
+    assert stages == ["checking", "deleting", "verifying", "uncertain"]
 
 
 async def test_stale_source_is_not_renamed_or_deleted(adb):

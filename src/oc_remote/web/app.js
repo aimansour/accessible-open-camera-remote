@@ -17,6 +17,11 @@ const labels = {
     manageHeading: "إدارة فيديو واحد", manageHint: "اختر فيديو واحدًا بعد إنهاء التسجيل والتحقق من حالته.",
     move: "نقل المحدد إلى الكمبيوتر", newStemLabel: "الاسم الجديد من دون الامتداد", rename: "إعادة التسمية",
     delete: "حذف الفيديو", confirmDelete: "تأكيد الحذف", cancelDelete: "إلغاء الحذف",
+    deletingChecking: "جارٍ الحذف والتحقق", deleteStages: {
+      checking: "جارٍ فحص الفيديو المحدد", deleting: "جارٍ حذفه من الهاتف",
+      verifying: "جارٍ فحص الملف وفهرس Android", verified: "اكتمل الحذف والتحقق",
+      uncertain: "نتيجة الحذف غير مؤكدة؛ افحص الهاتف"
+    },
     deleteQuestion: "تأكيد حذف الفيديو نهائيًا من الهاتف:", deleteCancelled: "أُلغي الحذف.",
     deleted: "تم حذف الفيديو والتحقق من فهرس Android.", renamed: "تغير الاسم وتم التحقق من فهرس Android.",
     moveStarted: "بدأ نقل الفيديو. ستظهر النتيجة في قسم النسخ.",
@@ -58,6 +63,11 @@ const labels = {
     manageHeading: "Manage one video", manageHint: "Select one video after recording has stopped and its state is verified.",
     move: "Move selected to PC", newStemLabel: "New name without extension", rename: "Rename",
     delete: "Delete video", confirmDelete: "Confirm deletion", cancelDelete: "Cancel deletion",
+    deletingChecking: "Deleting and checking", deleteStages: {
+      checking: "Checking the selected video", deleting: "Deleting from the phone",
+      verifying: "Checking the file and Android media index", verified: "Deletion verified",
+      uncertain: "Deletion result uncertain; inspect the phone"
+    },
     deleteQuestion: "Confirm permanent deletion from the phone:", deleteCancelled: "Deletion cancelled.",
     deleted: "Video removed and Android media index verified.", renamed: "Name changed and Android media index verified.",
     moveStarted: "Video move started. Its result will appear in the transfer section.",
@@ -102,6 +112,9 @@ let cameraRequests = Promise.resolve();
 let commandEpoch = 0;
 let currentVideos = null;
 let transferJob = null;
+let fileOperation = null;
+let handledFileJobId = null;
+let lastFileOperationJson = null;
 let lastTransferJson = null;
 let pendingDeleteName = null;
 let fileBusy = false;
@@ -134,6 +147,7 @@ function render() {
   renderCamera(current);
   if (currentVideos !== null) renderVideos(currentVideos);
   if (transferJob !== null) renderTransfers(transferJob);
+  if (fileOperation !== null) renderFileOperation(fileOperation);
   if (pendingDeleteName !== null && confirmDeleteButton.getAttribute("aria-disabled") !== "true") {
     document.getElementById("deleteConfirmation").textContent = `${words.deleteQuestion} ${pendingDeleteName}`;
   }
@@ -172,6 +186,7 @@ function updateCopyAvailability() {
 
 function updateMutationAvailability() {
   const allowed = current.confirmed_state === "idle" && current.verification_enabled && !current.busy && !fileBusy
+    && !(fileOperation && fileOperation.running)
     && !(transferJob && transferJob.running) && selectedNames().length === 1;
   for (const button of [moveButton, renameButton, deleteButton]) {
     button.setAttribute("aria-disabled", String(!allowed));
@@ -202,6 +217,11 @@ async function runMutation(action) {
   updateMutationAvailability();
   const words = labels[language];
   const folder = document.getElementById("phoneFolder").value;
+  if (action === "delete") {
+    confirmDeleteButton.textContent = words.deletingChecking;
+    confirmDeleteButton.setAttribute("aria-disabled", "true");
+    document.getElementById("manageResult").textContent = words.deletingChecking;
+  }
   try {
     if (action === "move") {
       await mutationRequest("/api/move", { folder, name, destination: document.getElementById("pcFolder").value });
@@ -213,18 +233,56 @@ async function runMutation(action) {
       document.getElementById("newStem").value = "";
       await refreshVideos();
     } else if (action === "delete") {
-      await mutationRequest("/api/delete", { folder, name, confirmed_name: pendingDeleteName });
-      document.getElementById("manageResult").textContent = words.deleted;
-      document.getElementById("deleteConfirmation").textContent = words.deleted;
-      confirmDeleteButton.setAttribute("aria-disabled", "true");
-      pendingDeleteName = null;
-      await refreshVideos();
+      const accepted = await mutationRequest("/api/delete", { folder, name, confirmed_name: pendingDeleteName });
+      fileOperation = { id: accepted.id, kind: "delete", stage: "checking", running: true, outcome: null };
+      renderFileOperation(fileOperation);
+      await refreshFileOperation(true);
     }
   } catch (error) {
     document.getElementById("manageResult").textContent = error.message;
+    if (action === "delete" && !(fileOperation && fileOperation.running)) {
+      confirmDeleteButton.textContent = labels[language].confirmDelete;
+      confirmDeleteButton.setAttribute("aria-disabled", "false");
+    }
   } finally {
     fileBusy = false;
     updateMutationAvailability();
+  }
+}
+
+function renderFileOperation(job) {
+  if (!job.id || job.kind !== "delete") return;
+  const words = labels[language];
+  document.getElementById("manageResult").textContent = words.deleteStages[job.stage] || words.deletingChecking;
+  confirmDeleteButton.textContent = job.running ? words.deletingChecking : words.confirmDelete;
+  confirmDeleteButton.setAttribute("aria-disabled", String(job.running || job.outcome !== null));
+  if (!job.running && job.id !== handledFileJobId) {
+    handledFileJobId = job.id;
+    if (job.outcome === "verified") {
+      pendingDeleteName = null;
+      document.getElementById("deleteConfirmation").textContent = words.deleted;
+      refreshVideos();
+    }
+  }
+  updateMutationAvailability();
+}
+
+async function refreshFileOperation(force = false) {
+  if (fileBusy && !force) return;
+  try {
+    const response = await fetch("/api/file-operation", { cache: "no-store" });
+    if (!response.ok) throw new Error("file operation request failed");
+    const job = await response.json();
+    if (!job.id) return;
+    const json = JSON.stringify(job);
+    if (json === lastFileOperationJson) return;
+    lastFileOperationJson = json;
+    fileOperation = job;
+    renderFileOperation(job);
+  } catch (_) {
+    if (fileOperation && fileOperation.running) {
+      document.getElementById("manageResult").textContent = labels[language].operationFailed;
+    }
   }
 }
 
@@ -370,6 +428,7 @@ renameButton.addEventListener("click", () => {
 });
 deleteButton.addEventListener("click", () => {
   if (deleteButton.getAttribute("aria-disabled") === "true") return;
+  fileOperation = null;
   pendingDeleteName = selectedOne();
   document.getElementById("deleteConfirmation").textContent = `${labels[language].deleteQuestion} ${pendingDeleteName}`;
   confirmDeleteButton.setAttribute("aria-disabled", "false");
@@ -391,5 +450,7 @@ document.getElementById("cancelDelete").addEventListener("click", () => {
 refresh();
 refreshVideos();
 refreshTransfers();
+refreshFileOperation();
 setInterval(refresh, 1000);
 setInterval(refreshTransfers, 1000);
+setInterval(refreshFileOperation, 1000);

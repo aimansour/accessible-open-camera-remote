@@ -4,6 +4,7 @@ import re
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 from urllib.parse import quote
 
 from .adb import AdbFailure
@@ -70,6 +71,21 @@ async def assert_source_unchanged(adb, entry: VideoEntry, folder: str) -> None:
         raise UncertainMutation("The selected phone file changed")
 
 
+async def remote_exists(adb, path: str) -> bool:
+    folder, name = path.rsplit("/", 1)
+    folder = validate_folder(folder)
+    name = validate_name(name)
+    raw = await adb.run(
+        "shell", "toybox", "find", shlex.quote(folder), "-maxdepth", "1", "-type", "f",
+        "-name", shlex.quote(name), "-printf", shlex.quote(r"%f\0"), timeout=10,
+    )
+    if raw == b"":
+        return False
+    if raw == name.encode("utf-8") + b"\0":
+        return True
+    raise MediaIndexError("Targeted phone file check returned an unexpected result")
+
+
 async def _scan(adb, folder: str, name: str) -> None:
     uri = "file://" + quote(media_path(folder, name), safe="/")
     await adb.run("shell", "am", "broadcast", "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
@@ -112,26 +128,38 @@ async def rename_one(adb, entry: VideoEntry, phone_folder: str, new_stem: str) -
         raise UncertainMutation("Rename result is uncertain; inspect the phone") from exc
 
 
-async def delete_one(adb, entry: VideoEntry, phone_folder: str, confirmed_name: str) -> None:
+async def delete_one(adb, entry: VideoEntry, phone_folder: str, confirmed_name: str,
+                     progress: Callable[[str], None] | None = None) -> None:
     folder = validate_folder(phone_folder)
     name = validate_name(entry.name)
     if confirmed_name != name:
         raise ValueError("The exact video name must be confirmed before deletion")
-    await assert_source_unchanged(adb, entry, folder)
-    row = await query_media_row(adb, folder, name)
+    report = progress or (lambda stage: None)
+    report("checking")
     try:
+        await assert_source_unchanged(adb, entry, folder)
+        row = await query_media_row(adb, folder, name)
+        report("deleting")
         if row is not None:
             await adb.run("shell", "content", "delete", "--uri",
                           f"content://media/external/video/media/{row.row_id}", timeout=10)
         else:
             await adb.run("shell", "rm", "-f", shlex.quote(f"{folder}/{name}"), timeout=10)
             await _scan(adb, folder, name)
-        if any(item.name == name for item in await list_videos(adb, folder)):
+        report("verifying")
+        exists = await remote_exists(adb, f"{folder}/{name}")
+        remaining_row = await query_media_row(adb, folder, name)
+        if exists:
             raise UncertainMutation("The phone file still exists after deletion")
-        if not await verify_media_index(adb, old_name=name, new_name=None, folder=folder):
+        if remaining_row is not None:
             raise UncertainMutation("Android's media index still contains the deleted video")
+        report("verified")
     except AdbFailure as exc:
+        report("uncertain")
         raise UncertainMutation("Deletion result is uncertain; inspect the phone") from exc
+    except (MediaIndexError, UncertainMutation):
+        report("uncertain")
+        raise
 
 
 async def move_one(adb, entry: VideoEntry, phone_folder: str, pc_folder: Path) -> TransferResult:

@@ -33,6 +33,9 @@ delete checks.
    unavailable. Use the phone manually and turn TalkBack on if needed. To
    return, open Open Camera in video mode, turn TalkBack off manually, and
    press “Start verification.” Wait for a fresh confirmed state.
+5. While copying an older disposable video, press “Start recording.” The
+   button name must change immediately and recording must begin before the
+   copy finishes. Check the copy and recording outcomes in their sections.
 
 ## Files and recovery
 

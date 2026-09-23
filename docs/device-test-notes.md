@@ -29,9 +29,8 @@ not the exact physical instant Open Camera reacted. The initial state dump
 took 2.597 seconds. The app sent the key before waiting for the slow UI dump.
 The recording test's extra evidence dump is outside the totals above.
 
-Not yet checked: whether the resulting videos contain the intended USB-C
-microphone audio, behavior with TalkBack on, and file finalization timing.
-Those require later acceptance checks.
+The early cycles did not check the USB-C microphone audio or file
+finalization timing. Later rapid-control results are recorded below.
 
 ## Browser and NVDA check
 
@@ -74,3 +73,44 @@ The browser demonstration exposed the selected-video actions and an inline
 confirmation with the exact filename. Clicking Delete kept focus on that
 button, and the browser reported no console errors. It did not send a delete
 request to the phone; that server path is covered by automated API tests.
+
+## Responsive workflow gate on the same phone
+
+On 2026-09-23, Samsung SM-A155F with Android 16 and Open Camera 1.56.2 was
+still in the foreground with TalkBack manually off. Windows 10 Pro and an
+installed NVDA 2026.1.1 were present. The new opt-in rapid-control test ran
+three times. It sent Start, waited 0.7 seconds after the first key command finished,
+then accepted Stop without waiting for the first UI dump. It left the new
+recordings on the phone for review. All three runs ended in confirmed idle with one
+result tone and a new positive-size, stable MP4. Times are measured from the
+Start submission:
+
+| Run | Both key commands completed | Final UI dump completed | Final video verified |
+| --- | ---: | ---: | ---: |
+| 1 | 3.287 s | 7.936 s | 8.798 s |
+| 2 | 3.634 s | 8.339 s | 9.271 s |
+| 3 | 3.386 s | 8.099 s | 8.994 s |
+
+The second key completed before the final UI dump in each run. A separate
+phone test held the copy of a random test-created old video, sent both camera
+keys during that hold, then released and verified the PC copy. It removed only
+its own random test source. The media-index device gate also passed again:
+its random test video was renamed and deleted, and targeted filesystem and
+MediaStore checks both showed absence after deletion.
+
+With the rebuilt service and a live browser page, two clicks 0.7 seconds
+apart changed the focused button name immediately from Start to Stop and back.
+The final API status was confirmed idle with generation 2; browser errors were
+empty and the local diagnostics recorded one `camera_verified` outcome for
+the burst. Fake-video browser checks in Arabic and English covered Select all,
+manual checkbox changes, and the checking/deleting/verifying text. The real
+delete API was exercised only on a random test-created phone file, not on a
+personal video.
+
+The user previously confirmed ordinary NVDA browse navigation and stable
+button position on the earlier page. The updated rapid-button and delete
+progress interactions have browser focus and accessibility-tree evidence,
+but have not yet been heard with NVDA by the user. USB-C microphone audio has
+not been listened to or attributed to that microphone. These two sensory
+checks remain for the user's acceptance session; the automated phone and
+browser checks do not establish them.

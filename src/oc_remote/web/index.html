@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="session-token" content="__SESSION_TOKEN__">
+  <title>التحكم في Open Camera</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <h1 id="title">التحكم في Open Camera</h1>
+      <p id="subtitle">تحكم في التسجيل من الكمبيوتر باستخدام أزرار المتصفح المعتادة.</p>
+      <label for="language" id="languageLabel">اللغة</label>
+      <select id="language">
+        <option value="ar">العربية</option>
+        <option value="en">English</option>
+      </select>
+    </header>
+
+    <section aria-labelledby="cameraHeading">
+      <h2 id="cameraHeading">التسجيل</h2>
+      <p id="stateText">جارٍ قراءة حالة الكاميرا</p>
+      <p id="messageText"></p>
+      <div class="actions">
+        <button id="camera" type="button" aria-disabled="true" aria-describedby="cameraHint">بدء التسجيل</button>
+        <button id="pause" type="button" aria-disabled="true" aria-describedby="cameraHint">إيقاف مؤقت</button>
+      </div>
+      <p id="cameraHint">الأزرار متاحة بعد التحقق من حالة Open Camera.</p>
+    </section>
+
+    <section aria-labelledby="verificationHeading">
+      <h2 id="verificationHeading">الفحص واستعمال الهاتف</h2>
+      <p id="verificationHelp">أوقف الفحص قبل استعمال الهاتف بنفسك. يمكنك تشغيله بعدها لقراءة الحالة من جديد.</p>
+      <button id="verification" type="button">إيقاف الفحص</button>
+    </section>
+  </main>
+</body>
+</html>

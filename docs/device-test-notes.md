@@ -30,5 +30,17 @@ took 2.597 seconds. The app sent the key before waiting for the slow UI dump.
 The recording test's extra evidence dump is outside the totals above.
 
 Not yet checked: whether the resulting videos contain the intended USB-C
-microphone audio, NVDA behavior in the browser, behavior with TalkBack on,
-and file finalization timing. Those require later acceptance checks.
+microphone audio, behavior with TalkBack on, and file finalization timing.
+Those require later acceptance checks.
+
+## Browser and NVDA check
+
+The local demonstration page was checked in Chromium accessibility snapshots:
+one level-1 heading, two level-2 headings, a native language select, and
+native recording and verification buttons were exposed. Arabic and English
+names appeared correctly. Browser checks found content, no error overlay, and
+no console errors. After clicking the verification button, it retained focus.
+The user confirmed that NVDA browse-mode navigation and button position worked
+normally in their browser. This was a demonstration page with a fake camera
+controller, so it did not test result tones or a real phone command through
+the browser; those remain for the complete workflow acceptance.

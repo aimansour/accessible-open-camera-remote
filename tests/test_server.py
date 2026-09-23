@@ -89,3 +89,13 @@ async def test_status_is_readable_without_token(client):
     response = await http.get("/api/status")
     assert response.status == 200
     assert (await response.json())["state"] == "idle"
+
+
+async def test_page_serves_session_token_and_web_assets(client):
+    http, _ = client
+    page = await http.get("/")
+    assert page.status == 200
+    assert '<meta name="session-token" content="valid">' in await page.text()
+    script = await http.get("/app.js")
+    assert script.status == 200
+    assert "renderCamera" in await script.text()

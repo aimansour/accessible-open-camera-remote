@@ -43,13 +43,14 @@ to the PC. No remote browser service or internet account is used.
    name immediately after a click. A tone comes only after checking the final
    result; two quick actions produce one final result tone.
 5. Before touching the phone manually, press **Stop verification** in the
-   page. Camera buttons become unavailable. When returning, put Open Camera
+   page. Camera buttons disappear. When returning, put Open Camera
    in video mode, turn TalkBack off manually, and press **Start verification**.
 
 Use **Select all** for the currently shown videos, or choose individual
-checkboxes. Copy publishes a PC file only after size and SHA-256 match.
-Move removes the phone source only after a verified copy. Delete requires an
-exact-name confirmation and shows checking, deleting, and verifying stages.
+checkboxes. Copy, move, and delete work on all selected videos; rename appears
+only for one. Actions that cannot be used are hidden. Copy publishes a PC file
+only after size and SHA-256 match. Move removes the phone source only after a
+verified copy. Delete confirms every full name and shows each file's stage.
 
 ## Recovery
 

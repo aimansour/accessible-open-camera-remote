@@ -114,3 +114,22 @@ but have not yet been heard with NVDA by the user. USB-C microphone audio has
 not been listened to or attributed to that microphone. These two sensory
 checks remain for the user's acceptance session; the automated phone and
 browser checks do not establish them.
+
+## User acceptance and batch-file follow-up
+
+Later on 2026-09-23, the user reported that the NVDA interactions and USB-C
+microphone audio worked in their session. This is the user's direct observation,
+not an automated audio-source measurement.
+
+The next browser check selected all 38 then-visible videos without sending a
+file mutation. Copy, move, and delete appeared; rename disappeared; focus stayed
+on Select all. Opening the inline delete confirmation listed all 38 exact names,
+then Cancel was pressed. No personal video was deleted or moved in that check.
+With zero selected, file-action buttons disappeared; with one selected, rename
+appeared. The opt-in batch device test created four random small MP4 files in
+the Open Camera folder. The API deleted two and moved two to a temporary PC
+folder, checking each phone file and MediaStore row afterward. Both batch jobs
+completed with one success tone per job; the test cleaned up only its own names.
+The gated test passed in 31.94 seconds.
+The rebuilt Windows executable also opened a loopback page showing 38 videos,
+with no file-action buttons exposed before selection and no browser errors.

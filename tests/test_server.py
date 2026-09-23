@@ -378,6 +378,111 @@ async def test_delete_requires_matching_explicit_confirmation(client):
     assert response.status == 400
 
 
+async def test_batch_delete_requires_exact_confirmed_selection(client):
+    http, controller = client
+
+    class Adb:
+        async def run(self, *args, **kwargs):
+            return b"first.mp4\x004\x001.0\x00second.mp4\x004\x001.0\x00"
+
+    controller.adb = Adb()
+    response = await http.post("/api/delete", json={
+        "names": ["first.mp4", "second.mp4"],
+        "confirmed_names": ["first.mp4", "other.mp4"],
+    }, headers=auth(http))
+    assert response.status == 400
+    assert not http.server.app[FILE_LOCK_KEY].locked()
+
+
+async def test_batch_delete_reports_each_result_and_one_final_tone(client, monkeypatch):
+    http, controller = client
+
+    class Adb:
+        async def run(self, *args, **kwargs):
+            return b"first.mp4\x004\x001.0\x00second.mp4\x004\x001.0\x00"
+
+    class Tone:
+        def __init__(self):
+            self.events = []
+
+        def success(self):
+            self.events.append("success")
+
+        def failure(self):
+            self.events.append("failure")
+
+    seen = []
+
+    async def fake_delete(adb, entry, folder, name, progress=None):
+        seen.append(name)
+        progress("checking")
+        progress("deleting")
+        progress("verifying")
+        if name == "second.mp4":
+            raise UncertainMutation("uncertain")
+        progress("verified")
+
+    from oc_remote.files import UncertainMutation
+    monkeypatch.setattr("oc_remote.server.delete_one", fake_delete)
+    controller.adb, controller.tone = Adb(), Tone()
+    response = await http.post("/api/delete", json={
+        "names": ["first.mp4", "second.mp4"],
+        "confirmed_names": ["first.mp4", "second.mp4"],
+    }, headers=auth(http))
+    assert response.status == 202
+    for _ in range(100):
+        job = await (await http.get("/api/file-operation")).json()
+        if not job["running"]:
+            break
+        await asyncio.sleep(0.001)
+    assert seen == ["first.mp4", "second.mp4"]
+    assert job["total"] == job["completed"] == 2
+    assert job["stages"] == {"first.mp4": "verified", "second.mp4": "uncertain"}
+    assert job["outcome"] == "uncertain"
+    assert controller.tone.events == ["failure"]
+
+
+async def test_batch_move_tracks_each_selected_file_and_one_tone(client, monkeypatch, tmp_path):
+    http, controller = client
+
+    class Adb:
+        async def run(self, *args, **kwargs):
+            return b"first.mp4\x004\x001.0\x00second.mp4\x004\x001.0\x00"
+
+    class Tone:
+        def __init__(self):
+            self.events = []
+
+        def success(self):
+            self.events.append("success")
+
+        def failure(self):
+            self.events.append("failure")
+
+    moved = []
+
+    async def fake_move(adb, entry, folder, destination):
+        from oc_remote.transfer import TransferResult
+        moved.append(entry.name)
+        return TransferResult(entry.name, "verified", str(destination / entry.name), "verified")
+
+    monkeypatch.setattr("oc_remote.server.move_one", fake_move)
+    controller.adb, controller.tone = Adb(), Tone()
+    response = await http.post("/api/move", json={
+        "names": ["first.mp4", "second.mp4"], "destination": str(tmp_path),
+    }, headers=auth(http))
+    assert response.status == 202
+    for _ in range(100):
+        job = await (await http.get("/api/transfers")).json()
+        if not job["running"]:
+            break
+        await asyncio.sleep(0.001)
+    assert moved == ["first.mp4", "second.mp4"]
+    assert job["total"] == job["completed"] == 2
+    assert len(job["results"]) == 2
+    assert controller.tone.events == ["success"]
+
+
 async def test_delete_returns_progress_before_completion_and_conflicts_with_second_delete(client, monkeypatch):
     http, controller = client
     deleting, release = asyncio.Event(), asyncio.Event()

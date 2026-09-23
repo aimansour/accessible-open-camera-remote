@@ -1,0 +1,118 @@
+"""Opt-in batch API gate; touches only random videos created here."""
+
+import asyncio
+import os
+import shlex
+import shutil
+import subprocess
+from pathlib import Path
+from urllib.parse import quote
+from uuid import uuid4
+
+import pytest
+from aiohttp.test_utils import TestClient, TestServer
+
+from oc_remote.adb import AdbClient
+from oc_remote.camera import CameraStatus
+from oc_remote.catalog import DEFAULT_PHONE_FOLDER
+from oc_remote.files import media_path, query_media_row, remote_exists
+from oc_remote.server import create_app
+from oc_remote.state import CaptureState
+
+
+@pytest.mark.skipif(os.getenv("OC_DEVICE_TEST") != "1", reason="device test is opt-in")
+async def test_batch_delete_and_move_only_created_videos(tmp_path):
+    serial = os.getenv("OC_DEVICE_SERIAL")
+    executable, ffmpeg = shutil.which("adb"), shutil.which("ffmpeg")
+    if not serial or not executable or not ffmpeg:
+        pytest.fail("Set OC_DEVICE_SERIAL and install ADB and ffmpeg")
+
+    class Tone:
+        def __init__(self):
+            self.events = []
+
+        def success(self):
+            self.events.append("success")
+
+        def failure(self):
+            self.events.append("failure")
+
+    class Controller:
+        def __init__(self):
+            self.adb = AdbClient(serial, Path(executable))
+            self.tone = Tone()
+
+        def status(self):
+            return CameraStatus(CaptureState.IDLE, True, False, "Test session", CaptureState.IDLE)
+
+    controller = Controller()
+    marker = f"oc_remote_batch_test_{uuid4().hex}"
+    delete_names = [f"{marker}_delete_{i}.mp4" for i in range(2)]
+    move_names = [f"{marker}_move_{i}.mp4" for i in range(2)]
+    names = delete_names + move_names
+
+    async def scan(name):
+        uri = "file://" + quote(media_path(DEFAULT_PHONE_FOLDER, name), safe="/")
+        await controller.adb.run(
+            "shell", "am", "broadcast", "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
+            "-d", shlex.quote(uri), timeout=10,
+        )
+
+    async def wait_job(http, endpoint):
+        for _ in range(120):
+            job = await (await http.get(endpoint)).json()
+            if not job["running"]:
+                return job
+            await asyncio.sleep(0.25)
+        pytest.fail(f"Batch job did not finish: {endpoint}")
+
+    try:
+        for name in names:
+            local = tmp_path / name
+            subprocess.run(
+                [ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                 "color=c=black:s=32x32:d=1", "-c:v", "mpeg4", "-t", "1", "-y", str(local)],
+                check=True, capture_output=True, timeout=30,
+            )
+            await controller.adb.run("push", str(local), f"{DEFAULT_PHONE_FOLDER}/{name}", timeout=30)
+            await scan(name)
+        for _ in range(10):
+            if all([await query_media_row(controller.adb, DEFAULT_PHONE_FOLDER, name) is not None
+                    for name in names]):
+                break
+            await asyncio.sleep(0.5)
+        else:
+            pytest.fail("Android did not index all random test videos")
+
+        async with TestClient(TestServer(create_app(controller, "batch-test-token"))) as http:
+            headers = {"Origin": str(http.make_url("/")).rstrip("/"),
+                       "X-Session-Token": "batch-test-token"}
+            deleted = await http.post("/api/delete", json={
+                "names": delete_names, "confirmed_names": delete_names,
+            }, headers=headers)
+            assert deleted.status == 202
+            delete_job = await wait_job(http, "/api/file-operation")
+            assert delete_job["outcome"] == "verified"
+            assert delete_job["completed"] == delete_job["total"] == 2
+            assert controller.tone.events == ["success"]
+            for name in delete_names:
+                assert not await remote_exists(controller.adb, f"{DEFAULT_PHONE_FOLDER}/{name}")
+                assert await query_media_row(controller.adb, DEFAULT_PHONE_FOLDER, name) is None
+
+            moved = await http.post("/api/move", json={
+                "names": move_names, "destination": str(tmp_path / "pc"),
+            }, headers=headers)
+            assert moved.status == 202
+            move_job = await wait_job(http, "/api/transfers")
+            assert move_job["completed"] == move_job["total"] == 2
+            assert [result["outcome"] for result in move_job["results"]] == ["verified", "verified"]
+            assert controller.tone.events == ["success", "success"]
+            for name in move_names:
+                assert (tmp_path / "pc" / name).is_file()
+                assert not await remote_exists(controller.adb, f"{DEFAULT_PHONE_FOLDER}/{name}")
+                assert await query_media_row(controller.adb, DEFAULT_PHONE_FOLDER, name) is None
+    finally:
+        for name in names:
+            await controller.adb.run("shell", "rm", "-f",
+                                     shlex.quote(f"{DEFAULT_PHONE_FOLDER}/{name}"), timeout=10)
+            await scan(name)

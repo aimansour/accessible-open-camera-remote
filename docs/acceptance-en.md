@@ -29,8 +29,8 @@ delete checks.
 3. Press “Stop recording” and wait for the result tone. Show videos and find
    the new file. Play it on the phone or PC and listen for the USB-C microphone
    audio. Recording state alone cannot confirm sound quality.
-4. Press “Stop verification.” Camera controls stay in place but become
-   unavailable. Use the phone manually and turn TalkBack on if needed. To
+4. Press “Stop verification.” Camera controls disappear until a fresh check.
+   Use the phone manually and turn TalkBack on if needed. To
    return, open Open Camera in video mode, turn TalkBack off manually, and
    press “Start verification.” Wait for a fresh confirmed state.
 5. While copying an older disposable video, press “Start recording.” The
@@ -50,14 +50,14 @@ delete checks.
 5. In NVDA browse mode, use `B` to reach “Select all” and press it. Use `X`
    to visit the checkboxes and check that every visible video is selected.
    The button becomes “Clear selection” and keeps the reading position.
-   Press it again to clear, or change individual boxes. Group copy remains
-   available; single-video actions are unavailable for multiple selections.
-6. For a disposable video intended for deletion, press “Delete video.” Read
-   the exact full filename in the inline confirmation. Try Cancel first and
-   confirm it stays; then confirm deletion. The confirmation button becomes
-   “Deleting and checking” immediately. Read the checking, deleting, and
-   verifying stages; a result tone follows the filesystem and MediaStore
-   postchecks.
+   Press it again to clear, or change individual boxes. Copy, move, and delete
+   appear for a group; rename appears only when exactly one video is selected.
+6. Select two disposable videos for deletion and press “Delete selected.” Read
+   both exact full names in the inline confirmation. Try Cancel first and
+   confirm both remain; then confirm deletion. Read each video's checking,
+   deleting, and verifying stages. One result tone follows the batch. Only a
+   file absent from both the phone and MediaStore is marked verified. Never
+   use personal videos for this test.
 7. If ADB disconnects after a command, expect an unknown camera state or an
    uncertain file result. Do not repeat a camera key. Reconnect and start
    verification for a fresh state. Never treat a partial copy as verified.

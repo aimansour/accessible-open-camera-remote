@@ -11,6 +11,7 @@ input[type="checkbox"] { min-height: auto; width: 1.2rem; height: 1.2rem; margin
 li { margin-block: .45rem; }
 button { background: #174a9b; border: 2px solid #174a9b; color: white; cursor: pointer; }
 button[aria-disabled="true"] { background: #e5e9ee; border-color: #aab4c2; color: #485465; cursor: default; }
+[hidden] { display: none !important; }
 button:focus-visible, select:focus-visible, input:focus-visible { outline: 4px solid #ff9f1c; outline-offset: 3px; }
 p { max-width: 65ch; }
 #messageText { min-height: 1.6em; }

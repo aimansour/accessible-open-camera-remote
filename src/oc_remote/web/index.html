@@ -25,8 +25,8 @@
       <p id="stateText">جارٍ قراءة حالة الكاميرا</p>
       <p id="messageText"></p>
       <div class="actions">
-        <button id="camera" type="button" aria-disabled="true" aria-describedby="cameraHint">بدء التسجيل</button>
-        <button id="pause" type="button" aria-disabled="true" aria-describedby="cameraHint">إيقاف مؤقت</button>
+        <button id="camera" type="button" hidden aria-describedby="cameraHint">بدء التسجيل</button>
+        <button id="pause" type="button" hidden aria-describedby="cameraHint">إيقاف مؤقت</button>
       </div>
       <p id="cameraHint">الأزرار متاحة بعد التحقق من حالة Open Camera.</p>
     </section>
@@ -42,7 +42,7 @@
       <label for="phoneFolder" id="phoneFolderLabel">مجلد Open Camera على الهاتف</label>
       <input id="phoneFolder" type="text" value="/sdcard/DCIM/OpenCamera" spellcheck="false">
       <button id="refreshVideos" type="button">عرض الفيديوهات</button>
-      <button id="selectAll" type="button" aria-disabled="true">تحديد الكل</button>
+      <button id="selectAll" type="button" hidden>تحديد الكل</button>
       <p id="videosHint">اختر الملفات بمربعات الاختيار. ستظهر أوامر النسخ والإدارة هنا.</p>
       <p id="videosMessage"></p>
       <ul id="videos"></ul>
@@ -52,25 +52,29 @@
       <h2 id="transferHeading">نسخ الفيديوهات إلى الكمبيوتر</h2>
       <label for="pcFolder" id="pcFolderLabel">مجلد الحفظ على الكمبيوتر</label>
       <input id="pcFolder" type="text" value="__PC_FOLDER__" spellcheck="false">
-      <button id="copy" type="button" aria-disabled="true">نسخ المحدد</button>
+      <button id="copy" type="button" hidden>نسخ المحدد</button>
       <p id="transferSummary"></p>
       <ul id="transferResults"></ul>
     </section>
 
     <section aria-labelledby="manageHeading">
-      <h2 id="manageHeading">إدارة فيديو واحد</h2>
-      <p id="manageHint">اختر فيديو واحدًا بعد إنهاء التسجيل والتحقق من حالته.</p>
-      <button id="move" type="button" aria-disabled="true">نقل المحدد إلى الكمبيوتر</button>
-      <label for="newStem" id="newStemLabel">الاسم الجديد من دون الامتداد</label>
-      <input id="newStem" type="text" spellcheck="false">
-      <button id="rename" type="button" aria-disabled="true">إعادة التسمية</button>
-      <button id="delete" type="button" aria-disabled="true">حذف الفيديو</button>
+      <h2 id="manageHeading">إدارة الفيديوهات المحددة</h2>
+      <p id="manageHint">حدد فيديوهات مكتملة بعد إنهاء التسجيل والتحقق من حالته.</p>
+      <button id="move" type="button" hidden>نقل المحدد إلى الكمبيوتر</button>
+      <div id="renameControls" hidden>
+        <label for="newStem" id="newStemLabel">الاسم الجديد من دون الامتداد</label>
+        <input id="newStem" type="text" spellcheck="false">
+        <button id="rename" type="button">إعادة التسمية</button>
+      </div>
+      <button id="delete" type="button" hidden>حذف المحدد</button>
       <div id="confirmationBox" hidden>
         <p id="deleteConfirmation"></p>
+        <ul id="deleteNames"></ul>
         <button id="confirmDelete" type="button">تأكيد الحذف</button>
         <button id="cancelDelete" type="button">إلغاء الحذف</button>
       </div>
       <p id="manageResult"></p>
+      <ul id="deleteResults"></ul>
     </section>
   </main>
 </body>

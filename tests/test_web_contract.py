@@ -68,3 +68,16 @@ def test_select_all_is_a_native_button_with_localized_toggle_labels():
     assert script.count("selectAll:") == 2
     assert script.count("clearSelection:") == 2
     assert 'selectAllButton.addEventListener("click"' in script
+
+
+def test_unavailable_actions_are_hidden_and_batch_confirmation_lists_names():
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    script = (WEB / "app.js").read_text(encoding="utf-8")
+    for control in ("camera", "pause", "selectAll", "copy", "move", "delete"):
+        assert f'id="{control}" type="button" hidden' in html
+    assert '<div id="renameControls" hidden>' in html
+    assert '<ul id="deleteNames"></ul>' in html
+    assert '<ul id="deleteResults"></ul>' in html
+    assert 'button.setAttribute("aria-disabled"' not in script
+    assert 'confirmed_names: pendingDeleteNames' in script
+    assert 'names, destination:' in script

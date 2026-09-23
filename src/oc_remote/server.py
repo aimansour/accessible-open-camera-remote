@@ -82,6 +82,22 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
             raise web.HTTPNotFound(text="Selected video no longer exists")
         return entry
 
+    async def selected_entries(folder, names):
+        try:
+            if (not isinstance(names, list) or not 1 <= len(names) <= 1000
+                    or any(not isinstance(name, str) for name in names)
+                    or len(set(names)) != len(names)):
+                raise ValueError
+            names = [validate_name(name) for name in names]
+            available = {entry.name: entry for entry in await list_videos(controller.adb, folder)}
+        except (ValueError, InvalidListing):
+            raise web.HTTPBadRequest(text="Choose distinct video names from the phone folder")
+        except AdbFailure:
+            raise web.HTTPBadGateway(text="Could not read phone videos")
+        if any(name not in available for name in names):
+            raise web.HTTPNotFound(text="A selected video no longer exists")
+        return [available[name] for name in names]
+
     async def page(request):
         require_local_host(request)
         html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
@@ -134,7 +150,7 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
                 names = payload["names"]
                 folder = validate_folder(payload.get("folder", DEFAULT_PHONE_FOLDER))
                 destination = Path(payload["destination"]).expanduser()
-                if (not isinstance(names, list) or not names or len(names) > 100
+                if (not isinstance(names, list) or not names or len(names) > 1000
                         or any(not isinstance(name, str) for name in names)
                         or len(set(names)) != len(names) or not destination.is_absolute()):
                     raise ValueError
@@ -239,13 +255,13 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
             try:
                 payload = await request.json()
                 folder = validate_folder(payload.get("folder", DEFAULT_PHONE_FOLDER))
-                name = payload["name"]
-                confirmed_name = payload["confirmed_name"]
-                if not isinstance(name, str) or confirmed_name != name:
+                names = payload.get("names", [payload.get("name")])
+                confirmed_names = payload.get("confirmed_names", [payload.get("confirmed_name")])
+                if confirmed_names != names:
                     raise ValueError
             except (ValueError, KeyError, TypeError):
-                raise web.HTTPBadRequest(text="Confirm the exact selected video name")
-            entry = await selected_entry(folder, name)
+                raise web.HTTPBadRequest(text="Confirm the exact selected video names")
+            entries = await selected_entries(folder, names)
             require_idle_for_mutation()
         except BaseException:
             app[FILE_LOCK_KEY].release()
@@ -253,10 +269,13 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
 
         job = app[FILE_JOB_KEY]
         job.update({"id": uuid4().hex, "kind": "delete", "stage": "checking", "running": True,
-                    "outcome": None, "message": "Checking the selected video"})
+                    "outcome": None, "message": "Checking selected videos", "total": len(entries),
+                    "completed": 0, "stages": {entry.name: "waiting" for entry in entries},
+                    "results": []})
 
-        def progress(stage: str) -> None:
+        def progress(name: str, stage: str) -> None:
             job["stage"] = stage
+            job["stages"][name] = stage
             job["message"] = {
                 "checking": "Checking the selected video",
                 "deleting": "Deleting from the phone",
@@ -267,21 +286,26 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
 
         async def perform_delete():
             try:
-                await delete_one(controller.adb, entry, folder, confirmed_name, progress=progress)
-                job["outcome"] = "verified"
+                for entry in entries:
+                    name = entry.name
+                    try:
+                        await delete_one(controller.adb, entry, folder, name,
+                                         progress=lambda stage, name=name: progress(name, stage))
+                        job["results"].append({"name": name, "outcome": "verified"})
+                    except Exception:
+                        progress(name, "uncertain")
+                        job["results"].append({"name": name, "outcome": "uncertain"})
+                    job["completed"] += 1
+                verified = all(result["outcome"] == "verified" for result in job["results"])
+                job["outcome"] = "verified" if verified else "uncertain"
+                job["stage"] = job["outcome"]
                 app[VERIFIED_CATALOG_KEY].pop(folder, None)
-                controller.tone.success()
-                record("delete_verified")
-            except (UncertainMutation, MediaIndexError, AdbFailure):
-                progress("uncertain")
-                job["outcome"] = "uncertain"
-                controller.tone.failure()
-                record("delete_uncertain")
-            except Exception:
-                progress("uncertain")
-                job["outcome"] = "uncertain"
-                controller.tone.failure()
-                record("delete_uncertain")
+                if verified:
+                    controller.tone.success()
+                    record("delete_verified")
+                else:
+                    controller.tone.failure()
+                    record("delete_uncertain")
             finally:
                 job["running"] = False
                 app[FILE_LOCK_KEY].release()
@@ -301,42 +325,46 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
             try:
                 payload = await request.json()
                 folder = validate_folder(payload.get("folder", DEFAULT_PHONE_FOLDER))
-                name = payload["name"]
+                names = payload.get("names", [payload.get("name")])
                 destination = Path(payload["destination"]).expanduser()
-                if not isinstance(name, str) or not destination.is_absolute():
+                if not destination.is_absolute():
                     raise ValueError
             except (ValueError, KeyError, TypeError):
-                raise web.HTTPBadRequest(text="Choose one video and an absolute PC folder")
-            entry = await selected_entry(folder, name)
+                raise web.HTTPBadRequest(text="Choose videos and an absolute PC folder")
+            entries = await selected_entries(folder, names)
             require_idle_for_mutation()
         except Exception:
             app[FILE_LOCK_KEY].release()
             raise
         job = app[TRANSFER_JOB_KEY]
         job.clear()
-        job.update({"id": uuid4().hex, "total": 1, "stages": {name: "copying"},
+        job.update({"id": uuid4().hex, "total": len(entries),
+                    "stages": {entry.name: "waiting" for entry in entries},
                     "results": [], "running": True, "completed": 0})
 
         async def perform_move():
             try:
-                result = await move_one(controller.adb, entry, folder, destination)
-                job["results"] = [asdict(result)]
-                job["stages"][name] = result.outcome
-                job["completed"] = 1
-                if result.outcome == "verified":
+                for entry in entries:
+                    name = entry.name
+                    job["stages"][name] = "copying"
+                    try:
+                        result = await move_one(controller.adb, entry, folder, destination)
+                        job["results"].append(asdict(result))
+                        job["stages"][name] = result.outcome
+                    except Exception:
+                        job["stages"][name] = "uncertain"
+                        job["results"].append({"name": name, "outcome": "uncertain", "destination": None,
+                                               "message": "Move result uncertain; inspect phone and PC"})
+                    job["completed"] += 1
+                verified = all(result["outcome"] == "verified" for result in job["results"])
+                if any(result["outcome"] == "verified" for result in job["results"]):
                     app[VERIFIED_CATALOG_KEY].pop(folder, None)
+                if verified:
                     controller.tone.success()
                     record("move_verified")
                 else:
                     controller.tone.failure()
                     record("move_uncertain")
-            except Exception:
-                job["stages"][name] = "uncertain"
-                job["results"] = [{"name": name, "outcome": "uncertain", "destination": None,
-                                   "message": "Move result uncertain; inspect phone and PC"}]
-                job["completed"] = 1
-                controller.tone.failure()
-                record("move_uncertain")
             finally:
                 job["running"] = False
                 app[FILE_LOCK_KEY].release()

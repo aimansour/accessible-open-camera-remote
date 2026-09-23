@@ -15,15 +15,15 @@ const labels = {
     transferCount: "ملفات مكتملة", stages: { waiting: "بانتظار النسخ", copying: "جارٍ النسخ", hashing: "جارٍ فحص البصمة", verified: "نسخة مؤكدة", failed: "فشل النسخ", uncertain: "نتيجة النقل غير مؤكدة" },
     uncertainMoveDetail: "نسخة الكمبيوتر مؤكدة؛ حذف الأصل من الهاتف غير مؤكد. افحص الملفين قبل أي إجراء آخر.",
     failedCopyDetail: "تعذر تأكيد النسخة. راجع الاتصال والمساحة ثم حاول من جديد.",
-    manageHeading: "إدارة فيديو واحد", manageHint: "اختر فيديو واحدًا بعد إنهاء التسجيل والتحقق من حالته.",
+    manageHeading: "إدارة الفيديوهات المحددة", manageHint: "حدد فيديوهات مكتملة بعد إنهاء التسجيل والتحقق من حالته.",
     move: "نقل المحدد إلى الكمبيوتر", newStemLabel: "الاسم الجديد من دون الامتداد", rename: "إعادة التسمية",
-    delete: "حذف الفيديو", confirmDelete: "تأكيد الحذف", cancelDelete: "إلغاء الحذف",
+    delete: "حذف المحدد", confirmDelete: "تأكيد الحذف", cancelDelete: "إلغاء الحذف",
     deletingChecking: "جارٍ الحذف والتحقق", deleteStages: {
       checking: "جارٍ فحص الفيديو المحدد", deleting: "جارٍ حذفه من الهاتف",
       verifying: "جارٍ فحص الملف وفهرس Android", verified: "اكتمل الحذف والتحقق",
       uncertain: "نتيجة الحذف غير مؤكدة؛ افحص الهاتف"
     },
-    deleteQuestion: "تأكيد حذف الفيديو نهائيًا من الهاتف:", deleteCancelled: "أُلغي الحذف.",
+    deleteQuestion: "تأكيد حذف الفيديوهات التالية نهائيًا من الهاتف:", deleteCancelled: "أُلغي الحذف.",
     deleted: "تم حذف الفيديو والتحقق من فهرس Android.", renamed: "تغير الاسم وتم التحقق من فهرس Android.",
     moveStarted: "بدأ نقل الفيديو. ستظهر النتيجة في قسم النسخ.",
     invalidInput: "تحقق من الاسم أو اختيار الملف ثم حاول من جديد.",
@@ -62,15 +62,15 @@ const labels = {
     transferCount: "files complete", stages: { waiting: "Waiting", copying: "Copying", hashing: "Checking SHA-256", verified: "Verified copy", failed: "Copy failed", uncertain: "Uncertain move" },
     uncertainMoveDetail: "The PC copy is verified; phone source removal is uncertain. Check both files before another action.",
     failedCopyDetail: "The copy could not be verified. Check the connection and free space, then retry.",
-    manageHeading: "Manage one video", manageHint: "Select one video after recording has stopped and its state is verified.",
+    manageHeading: "Manage selected videos", manageHint: "Select completed videos after recording has stopped and its state is verified.",
     move: "Move selected to PC", newStemLabel: "New name without extension", rename: "Rename",
-    delete: "Delete video", confirmDelete: "Confirm deletion", cancelDelete: "Cancel deletion",
+    delete: "Delete selected", confirmDelete: "Confirm deletion", cancelDelete: "Cancel deletion",
     deletingChecking: "Deleting and checking", deleteStages: {
       checking: "Checking the selected video", deleting: "Deleting from the phone",
       verifying: "Checking the file and Android media index", verified: "Deletion verified",
       uncertain: "Deletion result uncertain; inspect the phone"
     },
-    deleteQuestion: "Confirm permanent deletion from the phone:", deleteCancelled: "Deletion cancelled.",
+    deleteQuestion: "Confirm permanent deletion of these videos from the phone:", deleteCancelled: "Deletion cancelled.",
     deleted: "Video removed and Android media index verified.", renamed: "Name changed and Android media index verified.",
     moveStarted: "Video move started. Its result will appear in the transfer section.",
     invalidInput: "Check the name or selected video and try again.",
@@ -119,7 +119,7 @@ let fileOperation = null;
 let handledFileJobId = null;
 let lastFileOperationJson = null;
 let lastTransferJson = null;
-let pendingDeleteName = null;
+let pendingDeleteNames = null;
 let fileBusy = false;
 
 function renderCamera(status) {
@@ -128,8 +128,8 @@ function renderCamera(status) {
   const secondary = status.state === "paused" ? "resume" : "pause";
   cameraButton.textContent = words[primary];
   pauseButton.textContent = words[secondary];
-  cameraButton.setAttribute("aria-disabled", String(pendingCamera >= 8 || !status.verification_enabled || status.state === "unknown"));
-  pauseButton.setAttribute("aria-disabled", String(pendingCamera >= 8 || !status.verification_enabled || status.state === "idle" || status.state === "unknown"));
+  cameraButton.hidden = pendingCamera >= 8 || !status.verification_enabled || status.state === "unknown";
+  pauseButton.hidden = pendingCamera >= 8 || !status.verification_enabled || status.state === "idle" || status.state === "unknown";
   verificationButton.textContent = words[status.verification_enabled ? "verificationOn" : "verificationOff"];
   document.getElementById("stateText").textContent = words[status.state] || words.unknown;
   document.getElementById("messageText").textContent = status.message === "__disconnected__" ? words.disconnected
@@ -151,8 +151,8 @@ function render() {
   if (currentVideos !== null) renderVideos(currentVideos);
   if (transferJob !== null) renderTransfers(transferJob);
   if (fileOperation !== null) renderFileOperation(fileOperation);
-  if (pendingDeleteName !== null && confirmDeleteButton.getAttribute("aria-disabled") !== "true") {
-    document.getElementById("deleteConfirmation").textContent = `${words.deleteQuestion} ${pendingDeleteName}`;
+  if (pendingDeleteNames !== null) {
+    document.getElementById("deleteConfirmation").textContent = words.deleteQuestion;
   }
   updateSelectAll();
 }
@@ -185,7 +185,7 @@ function updateSelectAll() {
   const boxes = [...document.querySelectorAll('#videos input[type="checkbox"]')];
   const allSelected = boxes.length > 0 && boxes.every(box => box.checked);
   selectAllButton.textContent = labels[language][allSelected ? "clearSelection" : "selectAll"];
-  selectAllButton.setAttribute("aria-disabled", String(boxes.length === 0));
+  selectAllButton.hidden = boxes.length === 0;
 }
 
 function selectedNames() {
@@ -193,20 +193,19 @@ function selectedNames() {
 }
 
 function updateCopyAvailability() {
-  copyButton.setAttribute("aria-disabled", String(selectedNames().length === 0 || (transferJob && transferJob.running)));
+  copyButton.hidden = selectedNames().length === 0 || current.confirmed_state !== "idle"
+    || !current.verification_enabled || current.busy || fileBusy
+    || (fileOperation && fileOperation.running) || (transferJob && transferJob.running);
 }
 
 function updateMutationAvailability() {
+  const count = selectedNames().length;
   const allowed = current.confirmed_state === "idle" && current.verification_enabled && !current.busy && !fileBusy
-    && !(fileOperation && fileOperation.running)
-    && !(transferJob && transferJob.running) && selectedNames().length === 1;
-  for (const button of [moveButton, renameButton, deleteButton]) {
-    button.setAttribute("aria-disabled", String(!allowed));
-  }
-}
-
-function selectedOne() {
-  return selectedNames().length === 1 ? selectedNames()[0] : null;
+    && !(fileOperation && fileOperation.running) && !(transferJob && transferJob.running);
+  moveButton.hidden = !allowed || count === 0;
+  deleteButton.hidden = !allowed || count === 0;
+  document.getElementById("renameControls").hidden = !allowed || count !== 1;
+  updateCopyAvailability();
 }
 
 async function mutationRequest(endpoint, payload) {
@@ -223,38 +222,39 @@ async function mutationRequest(endpoint, payload) {
 }
 
 async function runMutation(action) {
-  const name = selectedOne();
-  if (!name || fileBusy) return;
+  const names = selectedNames();
+  if (!names.length || (action === "rename" && names.length !== 1) || fileBusy) return;
   fileBusy = true;
   updateMutationAvailability();
   const words = labels[language];
   const folder = document.getElementById("phoneFolder").value;
   if (action === "delete") {
-    confirmDeleteButton.textContent = words.deletingChecking;
-    confirmDeleteButton.setAttribute("aria-disabled", "true");
+    confirmDeleteButton.hidden = true;
+    document.getElementById("cancelDelete").hidden = true;
     document.getElementById("manageResult").textContent = words.deletingChecking;
   }
   try {
     if (action === "move") {
-      await mutationRequest("/api/move", { folder, name, destination: document.getElementById("pcFolder").value });
+      await mutationRequest("/api/move", { folder, names, destination: document.getElementById("pcFolder").value });
       document.getElementById("manageResult").textContent = words.moveStarted;
       await refreshTransfers();
     } else if (action === "rename") {
-      await mutationRequest("/api/rename", { folder, name, new_stem: document.getElementById("newStem").value });
+      await mutationRequest("/api/rename", { folder, name: names[0], new_stem: document.getElementById("newStem").value });
       document.getElementById("manageResult").textContent = words.renamed;
       document.getElementById("newStem").value = "";
       await refreshVideos();
     } else if (action === "delete") {
-      const accepted = await mutationRequest("/api/delete", { folder, name, confirmed_name: pendingDeleteName });
-      fileOperation = { id: accepted.id, kind: "delete", stage: "checking", running: true, outcome: null };
+      const accepted = await mutationRequest("/api/delete", { folder, names, confirmed_names: pendingDeleteNames });
+      fileOperation = { id: accepted.id, kind: "delete", stage: "checking", running: true,
+        outcome: null, total: names.length, completed: 0, stages: Object.fromEntries(names.map(name => [name, "waiting"])) };
       renderFileOperation(fileOperation);
       await refreshFileOperation(true);
     }
   } catch (error) {
     document.getElementById("manageResult").textContent = error.message;
     if (action === "delete" && !(fileOperation && fileOperation.running)) {
-      confirmDeleteButton.textContent = labels[language].confirmDelete;
-      confirmDeleteButton.setAttribute("aria-disabled", "false");
+      confirmDeleteButton.hidden = false;
+      document.getElementById("cancelDelete").hidden = false;
     }
   } finally {
     fileBusy = false;
@@ -265,16 +265,20 @@ async function runMutation(action) {
 function renderFileOperation(job) {
   if (!job.id || job.kind !== "delete") return;
   const words = labels[language];
-  document.getElementById("manageResult").textContent = words.deleteStages[job.stage] || words.deletingChecking;
-  confirmDeleteButton.textContent = job.running ? words.deletingChecking : words.confirmDelete;
-  confirmDeleteButton.setAttribute("aria-disabled", String(job.running || job.outcome !== null));
+  document.getElementById("manageResult").textContent =
+    `${words.deleteStages[job.stage] || words.deletingChecking}: ${job.completed}/${job.total}`;
+  const results = document.getElementById("deleteResults");
+  results.replaceChildren();
+  for (const [name, stage] of Object.entries(job.stages || {})) {
+    const item = document.createElement("li");
+    item.textContent = `${name} — ${words.deleteStages[stage] || stage}`;
+    results.append(item);
+  }
   if (!job.running && job.id !== handledFileJobId) {
     handledFileJobId = job.id;
-    if (job.outcome === "verified") {
-      pendingDeleteName = null;
-      document.getElementById("deleteConfirmation").textContent = words.deleted;
-      refreshVideos();
-    }
+    pendingDeleteNames = null;
+    document.getElementById("confirmationBox").hidden = true;
+    refreshVideos();
   }
   updateMutationAvailability();
 }
@@ -391,11 +395,11 @@ function command(action) {
 }
 
 cameraButton.addEventListener("click", () => {
-  if (cameraButton.getAttribute("aria-disabled") === "true") return;
+  if (cameraButton.hidden) return;
   command(current.state === "idle" ? "start" : "stop");
 });
 pauseButton.addEventListener("click", () => {
-  if (pauseButton.getAttribute("aria-disabled") === "true") return;
+  if (pauseButton.hidden) return;
   command(current.state === "paused" ? "resume" : "pause");
 });
 verificationButton.addEventListener("click", async () => {
@@ -413,25 +417,25 @@ verificationButton.addEventListener("click", async () => {
 languageSelect.addEventListener("change", () => { language = languageSelect.value; render(); });
 document.getElementById("refreshVideos").addEventListener("click", refreshVideos);
 selectAllButton.addEventListener("click", () => {
-  if (selectAllButton.getAttribute("aria-disabled") === "true") return;
+  if (selectAllButton.hidden) return;
   const boxes = [...document.querySelectorAll('#videos input[type="checkbox"]')];
   const allSelected = boxes.every(box => box.checked);
   for (const box of boxes) box.checked = !allSelected;
   updateSelectAll();
   updateCopyAvailability();
   updateMutationAvailability();
-  pendingDeleteName = null;
+  pendingDeleteNames = null;
   document.getElementById("confirmationBox").hidden = true;
 });
 document.getElementById("videos").addEventListener("change", () => {
   updateSelectAll();
   updateCopyAvailability();
   updateMutationAvailability();
-  pendingDeleteName = null;
+  pendingDeleteNames = null;
   document.getElementById("confirmationBox").hidden = true;
 });
 copyButton.addEventListener("click", async () => {
-  if (copyButton.getAttribute("aria-disabled") === "true") return;
+  if (copyButton.hidden) return;
   try {
     const response = await fetch("/api/copy", {
       method: "POST", headers: { "Content-Type": "application/json", "X-Session-Token": token },
@@ -445,31 +449,41 @@ copyButton.addEventListener("click", async () => {
   }
 });
 moveButton.addEventListener("click", () => {
-  if (moveButton.getAttribute("aria-disabled") !== "true") runMutation("move");
+  if (!moveButton.hidden) runMutation("move");
 });
 renameButton.addEventListener("click", () => {
-  if (renameButton.getAttribute("aria-disabled") !== "true") runMutation("rename");
+  if (!document.getElementById("renameControls").hidden) runMutation("rename");
 });
 deleteButton.addEventListener("click", () => {
-  if (deleteButton.getAttribute("aria-disabled") === "true") return;
+  if (deleteButton.hidden) return;
   fileOperation = null;
-  pendingDeleteName = selectedOne();
-  document.getElementById("deleteConfirmation").textContent = `${labels[language].deleteQuestion} ${pendingDeleteName}`;
-  confirmDeleteButton.setAttribute("aria-disabled", "false");
+  pendingDeleteNames = selectedNames();
+  document.getElementById("deleteConfirmation").textContent = labels[language].deleteQuestion;
+  const list = document.getElementById("deleteNames");
+  list.replaceChildren();
+  for (const name of pendingDeleteNames) {
+    const item = document.createElement("li");
+    item.textContent = name;
+    list.append(item);
+  }
+  confirmDeleteButton.hidden = false;
+  document.getElementById("cancelDelete").hidden = false;
   document.getElementById("confirmationBox").hidden = false;
 });
 confirmDeleteButton.addEventListener("click", () => {
-  if (confirmDeleteButton.getAttribute("aria-disabled") === "true" || pendingDeleteName !== selectedOne()) return;
+  if (confirmDeleteButton.hidden || JSON.stringify(pendingDeleteNames) !== JSON.stringify(selectedNames())) return;
   runMutation("delete");
 });
 document.getElementById("cancelDelete").addEventListener("click", () => {
-  if (pendingDeleteName === null) {
+  if (pendingDeleteNames === null) {
     document.getElementById("confirmationBox").hidden = true;
     return;
   }
-  pendingDeleteName = null;
-  confirmDeleteButton.setAttribute("aria-disabled", "true");
-  document.getElementById("deleteConfirmation").textContent = labels[language].deleteCancelled;
+  pendingDeleteNames = null;
+  confirmDeleteButton.hidden = true;
+  document.getElementById("cancelDelete").hidden = true;
+  document.getElementById("confirmationBox").hidden = true;
+  document.getElementById("manageResult").textContent = labels[language].deleteCancelled;
 });
 refresh();
 refreshVideos();

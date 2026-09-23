@@ -1,7 +1,7 @@
 # Accessible Open Camera Remote
 
 [Public repository](https://github.com/aimansour/accessible-open-camera-remote)
-· [Download Windows v0.1.0](https://github.com/aimansour/accessible-open-camera-remote/releases/tag/v0.1.0)
+· [Download Windows v0.1.1](https://github.com/aimansour/accessible-open-camera-remote/releases/tag/v0.1.1)
 
 A local Windows browser control for [Open Camera](https://opencamera.org.uk/) on
 Android. It is designed for ordinary NVDA browse mode: native buttons and
@@ -17,7 +17,8 @@ Android Debug Bridge (ADB); it does not install a phone app or change TalkBack.
 - Verify the latest recording state. After Stop, require a new or changed MP4
   with a positive size stable across two reads before reporting success.
 - List phone videos, select one or all, copy with size and SHA-256 checks, move
-  after a verified copy, rename, and delete with visible checking stages.
+  after a verified copy, and delete selected videos with a result for each.
+  Rename appears for one selected video. Unavailable actions are hidden.
 - Run recording controls while a copy of an older selected video is in
   progress. File mutations require a confirmed idle camera state.
 
@@ -33,8 +34,8 @@ headings, `B` for buttons, and `X` for checkboxes.
 Open Camera must be in video mode with its volume-up shortcut set to start or
 stop and volume-down set to pause or resume. Turn TalkBack off manually while
 the program checks the phone screen. Use the page's **Stop verification**
-button before using the phone yourself; recording buttons then become
-unavailable until a fresh verification. The program never toggles TalkBack.
+button before using the phone yourself; recording buttons then disappear
+until a fresh verification. The program never toggles TalkBack.
 
 The exact Windows and phone checklist is in [acceptance-en.md](docs/acceptance-en.md)
 or [acceptance-ar.md](docs/acceptance-ar.md).
@@ -49,16 +50,16 @@ do not store filenames, screen XML, or video contents. They are local at
 
 Copy uses a temporary PC file and publishes it only after size and SHA-256
 match. Move deletes the phone original only after the copy is verified. Delete
-requires selecting one file and confirming its exact full name. Uncertain
+requires confirming the exact full names of all selected files. Uncertain
 results do not retry a camera key or claim a successful file mutation.
 
 ## Tested scope and current limits
 
 The device workflow was exercised on Windows 10 Pro, Samsung SM-A155F,
 Android 16, Open Camera 1.56.2, and ADB 37.0.1. Browser focus and button names
-were checked in Arabic and English; the user confirmed NVDA browse navigation
-on the earlier interface. The updated rapid-button and delete-progress speech
-experience, and USB-C microphone sound, await direct human listening. Other
+were checked in Arabic and English. The user reported that NVDA interaction
+and USB-C microphone sound worked in their session. Batch delete and move
+were tested on four disposable files created by the device test. Other
 phones, Open Camera versions, and nondefault recording folders are unverified.
 Recording finalization currently checks `/sdcard/DCIM/OpenCamera`.
 

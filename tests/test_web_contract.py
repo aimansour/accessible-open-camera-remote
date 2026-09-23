@@ -59,3 +59,12 @@ def test_camera_buttons_are_not_disabled_just_for_pending_verification():
     script = (WEB / "app.js").read_text(encoding="utf-8")
     assert 'String(status.busy ||' not in script
     assert 'confirmed_state' in script
+
+
+def test_select_all_is_a_native_button_with_localized_toggle_labels():
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    script = (WEB / "app.js").read_text(encoding="utf-8")
+    assert '<button id="selectAll"' in html
+    assert script.count("selectAll:") == 2
+    assert script.count("clearSelection:") == 2
+    assert 'selectAllButton.addEventListener("click"' in script

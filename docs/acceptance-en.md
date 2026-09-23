@@ -20,9 +20,10 @@ delete checks.
 
 ## Recording and verification
 
-1. Read “Ready to record.” Press “Start recording.” The command is sent
-   before the result check finishes. A result tone follows verification, and
-   the button becomes “Stop recording.”
+1. Read “Ready to record.” Press “Start recording.” The button becomes
+   “Stop recording” immediately and can be pressed again for a short clip.
+   One tone follows verification of the final state and completed video;
+   pressing a button alone makes no tone.
 2. Press “Pause,” then “Resume.” Check the button names and recording state
    after each result tone. A click alone does not play a tone.
 3. Press “Stop recording” and wait for the result tone. Show videos and find
@@ -43,10 +44,18 @@ delete checks.
    `.mp4` remains and the renamed video appears in the phone gallery.
 4. Move a different disposable video. Its phone source may be removed only
    after PC size and SHA-256 match. Check PC presence and phone absence.
-5. For a disposable video intended for deletion, press “Delete video.” Read
+5. In NVDA browse mode, use `B` to reach “Select all” and press it. Use `X`
+   to visit the checkboxes and check that every visible video is selected.
+   The button becomes “Clear selection” and keeps the reading position.
+   Press it again to clear, or change individual boxes. Group copy remains
+   available; single-video actions are unavailable for multiple selections.
+6. For a disposable video intended for deletion, press “Delete video.” Read
    the exact full filename in the inline confirmation. Try Cancel first and
-   confirm it stays; then confirm deletion and check the phone and gallery.
-6. If ADB disconnects after a command, expect an unknown camera state or an
+   confirm it stays; then confirm deletion. The confirmation button becomes
+   “Deleting and checking” immediately. Read the checking, deleting, and
+   verifying stages; a result tone follows the filesystem and MediaStore
+   postchecks.
+7. If ADB disconnects after a command, expect an unknown camera state or an
    uncertain file result. Do not repeat a camera key. Reconnect and start
    verification for a fresh state. Never treat a partial copy as verified.
 

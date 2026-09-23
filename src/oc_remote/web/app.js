@@ -7,7 +7,8 @@ const labels = {
     verificationHelp: "أوقف الفحص قبل استعمال الهاتف بنفسك. يمكنك تشغيله بعدها لقراءة الحالة من جديد.",
     cameraHint: "الأزرار متاحة بعد التحقق من حالة Open Camera.",
     videosHeading: "الفيديوهات المكتملة", phoneFolderLabel: "مجلد Open Camera على الهاتف",
-    refreshVideos: "عرض الفيديوهات", videosHint: "اختر الملفات بمربعات الاختيار. ستظهر أوامر النسخ والإدارة هنا.",
+    refreshVideos: "عرض الفيديوهات", selectAll: "تحديد الكل", clearSelection: "إلغاء التحديد",
+    videosHint: "اختر الملفات بمربعات الاختيار. ستظهر أوامر النسخ والإدارة هنا.",
     noVideos: "لا توجد فيديوهات في هذا المجلد.", videosError: "تعذرت قراءة فيديوهات الهاتف.", bytes: "بايت",
     transferHeading: "نسخ الفيديوهات إلى الكمبيوتر", pcFolderLabel: "مجلد الحفظ على الكمبيوتر", copy: "نسخ المحدد",
     transferPending: "جارٍ نسخ الملفات", transferFinished: "اكتملت المجموعة", transferError: "تعذر قراءة تقدم النسخ",
@@ -53,7 +54,8 @@ const labels = {
     verificationHelp: "Stop verification before using the phone yourself. Start it again to read the current state.",
     cameraHint: "Recording buttons are available after Open Camera state is verified.",
     videosHeading: "Completed videos", phoneFolderLabel: "Open Camera folder on phone",
-    refreshVideos: "Show videos", videosHint: "Select files with checkboxes. Copy and management commands will appear here.",
+    refreshVideos: "Show videos", selectAll: "Select all", clearSelection: "Clear selection",
+    videosHint: "Select files with checkboxes. Copy and management commands will appear here.",
     noVideos: "No videos in this folder.", videosError: "Could not read phone videos.", bytes: "bytes",
     transferHeading: "Copy videos to PC", pcFolderLabel: "PC destination folder", copy: "Copy selected",
     transferPending: "Copying files", transferFinished: "Batch complete", transferError: "Could not read transfer progress",
@@ -99,6 +101,7 @@ const cameraButton = document.getElementById("camera");
 const pauseButton = document.getElementById("pause");
 const verificationButton = document.getElementById("verification");
 const copyButton = document.getElementById("copy");
+const selectAllButton = document.getElementById("selectAll");
 const moveButton = document.getElementById("move");
 const renameButton = document.getElementById("rename");
 const deleteButton = document.getElementById("delete");
@@ -140,7 +143,7 @@ function render() {
   document.documentElement.lang = language;
   document.documentElement.dir = language === "ar" ? "rtl" : "ltr";
   document.title = words.title;
-  for (const id of ["title", "subtitle", "cameraHeading", "verificationHeading", "verificationHelp", "cameraHint", "videosHeading", "videosHint", "refreshVideos", "phoneFolderLabel", "transferHeading", "pcFolderLabel", "copy", "manageHeading", "manageHint", "move", "newStemLabel", "rename", "delete", "confirmDelete", "cancelDelete"]) {
+  for (const id of ["title", "subtitle", "cameraHeading", "verificationHeading", "verificationHelp", "cameraHint", "videosHeading", "videosHint", "refreshVideos", "selectAll", "phoneFolderLabel", "transferHeading", "pcFolderLabel", "copy", "manageHeading", "manageHint", "move", "newStemLabel", "rename", "delete", "confirmDelete", "cancelDelete"]) {
     document.getElementById(id).textContent = words[id];
   }
   document.getElementById("languageLabel").textContent = words.language;
@@ -151,6 +154,7 @@ function render() {
   if (pendingDeleteName !== null && confirmDeleteButton.getAttribute("aria-disabled") !== "true") {
     document.getElementById("deleteConfirmation").textContent = `${words.deleteQuestion} ${pendingDeleteName}`;
   }
+  updateSelectAll();
 }
 
 function renderVideos(entries) {
@@ -174,6 +178,14 @@ function renderVideos(entries) {
   }
   updateCopyAvailability();
   updateMutationAvailability();
+  updateSelectAll();
+}
+
+function updateSelectAll() {
+  const boxes = [...document.querySelectorAll('#videos input[type="checkbox"]')];
+  const allSelected = boxes.length > 0 && boxes.every(box => box.checked);
+  selectAllButton.textContent = labels[language][allSelected ? "clearSelection" : "selectAll"];
+  selectAllButton.setAttribute("aria-disabled", String(boxes.length === 0));
 }
 
 function selectedNames() {
@@ -400,7 +412,19 @@ verificationButton.addEventListener("click", async () => {
 });
 languageSelect.addEventListener("change", () => { language = languageSelect.value; render(); });
 document.getElementById("refreshVideos").addEventListener("click", refreshVideos);
+selectAllButton.addEventListener("click", () => {
+  if (selectAllButton.getAttribute("aria-disabled") === "true") return;
+  const boxes = [...document.querySelectorAll('#videos input[type="checkbox"]')];
+  const allSelected = boxes.every(box => box.checked);
+  for (const box of boxes) box.checked = !allSelected;
+  updateSelectAll();
+  updateCopyAvailability();
+  updateMutationAvailability();
+  pendingDeleteName = null;
+  document.getElementById("confirmationBox").hidden = true;
+});
 document.getElementById("videos").addEventListener("change", () => {
+  updateSelectAll();
   updateCopyAvailability();
   updateMutationAvailability();
   pendingDeleteName = null;

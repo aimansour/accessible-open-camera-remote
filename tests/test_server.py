@@ -202,7 +202,7 @@ async def test_copy_batch_returns_202_and_reports_progress(client, monkeypatch, 
         def failure(self):
             self.events.append("failure")
 
-    async def fake_copy_many(adb, entries, folder, pc_folder, progress=None):
+    async def fake_copy_many(adb, entries, folder, pc_folder, progress=None, on_result=None):
         progress("clip.mp4", "copying")
         await release.wait()
         from oc_remote.transfer import TransferResult
@@ -221,6 +221,60 @@ async def test_copy_batch_returns_202_and_reports_progress(client, monkeypatch, 
     release.set()
     await asyncio.sleep(0)
     assert not http.server.app[FILE_LOCK_KEY].locked()
+    assert controller.tone.events == ["success"]
+
+
+async def test_copy_job_reports_each_verified_file_before_batch_finishes(client, monkeypatch, tmp_path):
+    http, controller = client
+    first_finished, release_second = asyncio.Event(), asyncio.Event()
+
+    class Adb:
+        async def run(self, *args, **kwargs):
+            return b"first.mp4\x004\x001.0\x00second.mp4\x004\x001.0\x00"
+
+    class Tone:
+        def __init__(self):
+            self.events = []
+
+        def success(self):
+            self.events.append("success")
+
+        def failure(self):
+            self.events.append("failure")
+
+    async def held_copies(adb, entries, folder, pc_folder, progress=None, on_result=None):
+        from oc_remote.transfer import TransferResult
+        first = TransferResult("first.mp4", "verified", str(pc_folder / "first.mp4"), "verified")
+        if on_result:
+            on_result(first)
+        first_finished.set()
+        await release_second.wait()
+        second = TransferResult("second.mp4", "verified", str(pc_folder / "second.mp4"), "verified")
+        if on_result:
+            on_result(second)
+        return [first, second]
+
+    monkeypatch.setattr("oc_remote.server.copy_many", held_copies)
+    controller.adb, controller.tone = Adb(), Tone()
+    response = await http.post("/api/copy", json={
+        "names": ["first.mp4", "second.mp4"], "destination": str(tmp_path),
+    }, headers=auth(http))
+    assert response.status == 202
+    try:
+        await asyncio.wait_for(first_finished.wait(), 1)
+        job = await (await http.get("/api/transfers")).json()
+        assert job["kind"] == "copy"
+        assert job["running"] is True and job["completed"] == 1
+        assert [result["name"] for result in job["results"]] == ["first.mp4"]
+        assert controller.tone.events == []
+    finally:
+        release_second.set()
+    for _ in range(100):
+        job = await (await http.get("/api/transfers")).json()
+        if not job["running"]:
+            break
+        await asyncio.sleep(0.001)
+    assert job["completed"] == 2
     assert controller.tone.events == ["success"]
 
 
@@ -258,7 +312,7 @@ async def test_camera_key_bypasses_active_copy_of_captured_old_video(monkeypatch
         def failure(self):
             pass
 
-    async def held_copy(adb, entries, folder, destination, progress=None):
+    async def held_copy(adb, entries, folder, destination, progress=None, on_result=None):
         assert [entry.name for entry in entries] == ["old.mp4"]
         copy_started.set()
         await release_copy.wait()

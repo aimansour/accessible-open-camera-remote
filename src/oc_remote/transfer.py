@@ -112,8 +112,11 @@ async def copy_one(adb, entry: VideoEntry, phone_folder: str, pc_folder: Path,
 
 
 async def copy_many(adb, entries: list[VideoEntry], phone_folder: str, pc_folder: Path,
-                    progress=None) -> list[TransferResult]:
+                    progress=None, on_result=None) -> list[TransferResult]:
     results = []
     for entry in entries:
-        results.append(await copy_one(adb, entry, phone_folder, pc_folder, progress=progress))
+        result = await copy_one(adb, entry, phone_folder, pc_folder, progress=progress)
+        results.append(result)
+        if on_result is not None:
+            on_result(result)
     return results

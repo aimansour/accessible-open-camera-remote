@@ -53,7 +53,8 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
     app[SESSION_TOKEN_KEY] = token
     app[CAMERA_TASKS_KEY] = set()
     app[TRANSFER_TASKS_KEY] = set()
-    app[TRANSFER_JOB_KEY] = {"total": 0, "stages": {}, "results": [], "running": False, "completed": 0}
+    app[TRANSFER_JOB_KEY] = {"kind": None, "total": 0, "stages": {}, "results": [],
+                             "running": False, "completed": 0}
     app[FILE_JOB_KEY] = {"id": None, "kind": None, "stage": None, "running": False,
                          "outcome": None, "message": ""}
     app[VERIFIED_CATALOG_KEY] = {}
@@ -179,15 +180,22 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
             raise
         job = app[TRANSFER_JOB_KEY]
         job.clear()
-        job.update({"id": uuid4().hex, "total": len(entries), "stages": {name: "waiting" for name in names},
+        job.update({"id": uuid4().hex, "kind": "copy", "total": len(entries),
+                    "stages": {name: "waiting" for name in names},
                     "results": [], "running": True, "completed": 0})
 
         def progress(name, stage):
             job["stages"][name] = stage
 
+        def on_result(result):
+            job["results"].append(asdict(result))
+            job["stages"][result.name] = result.outcome
+            job["completed"] += 1
+
         async def perform_copy():
             try:
-                results = await copy_many(controller.adb, entries, folder, destination, progress=progress)
+                results = await copy_many(controller.adb, entries, folder, destination,
+                                          progress=progress, on_result=on_result)
                 job["results"] = [asdict(result) for result in results]
                 job["completed"] = len(results)
                 if all(result.outcome == "verified" for result in results):

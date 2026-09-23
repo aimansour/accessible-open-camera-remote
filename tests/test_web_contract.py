@@ -24,3 +24,13 @@ def test_both_languages_have_matching_camera_action_keys():
     for message in ("Camera state verified", "Unlock the phone and bring Open Camera to the foreground",
                     "Camera result uncertain; check the phone, then verify again"):
         assert script.count(f'"{message}":') == 2
+
+
+def test_video_list_uses_labeled_folder_and_native_checkboxes():
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    script = (WEB / "app.js").read_text(encoding="utf-8")
+    assert '<label for="phoneFolder"' in html
+    assert '<ul id="videos"' in html
+    assert 'document.createElement("input")' in script
+    assert 'checkbox.type = "checkbox"' in script
+    assert "innerHTML" not in script

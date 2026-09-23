@@ -5,9 +5,12 @@ header, section { background: #fff; border: 1px solid #c7d2e0; border-radius: .8
 h1, h2 { line-height: 1.25; margin-top: 0; }
 section { border-inline-start: .35rem solid #225cb6; }
 .actions { display: flex; flex-wrap: wrap; gap: .7rem; }
-button, select { font: inherit; min-height: 2.8rem; padding: .55rem 1rem; border-radius: .4rem; }
+button, select, input { font: inherit; min-height: 2.8rem; padding: .55rem 1rem; border-radius: .4rem; }
+input[type="text"] { max-width: 100%; box-sizing: border-box; border: 1px solid #7c8da3; }
+input[type="checkbox"] { min-height: auto; width: 1.2rem; height: 1.2rem; margin-inline-end: .5rem; }
+li { margin-block: .45rem; }
 button { background: #174a9b; border: 2px solid #174a9b; color: white; cursor: pointer; }
 button[aria-disabled="true"] { background: #e5e9ee; border-color: #aab4c2; color: #485465; cursor: default; }
-button:focus-visible, select:focus-visible { outline: 4px solid #ff9f1c; outline-offset: 3px; }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 4px solid #ff9f1c; outline-offset: 3px; }
 p { max-width: 65ch; }
 #messageText { min-height: 1.6em; }

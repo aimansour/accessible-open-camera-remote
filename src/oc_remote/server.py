@@ -7,6 +7,8 @@ from pathlib import Path
 from aiohttp import web
 
 from .camera import CameraAction, CommandBusy, CommandUnavailable
+from .catalog import DEFAULT_PHONE_FOLDER, InvalidListing, list_videos, validate_folder
+from .adb import AdbFailure
 
 
 CONTROLLER_KEY = web.AppKey("controller", object)
@@ -57,6 +59,18 @@ def create_app(controller, token: str) -> web.Application:
         require_local_host(request)
         return web.json_response(asdict(controller.status()))
 
+    async def videos(request):
+        require_local_host(request)
+        try:
+            folder = validate_folder(request.query.get("folder", DEFAULT_PHONE_FOLDER))
+        except ValueError:
+            raise web.HTTPBadRequest(text="Choose a shared-storage phone folder")
+        try:
+            entries = await list_videos(controller.adb, folder)
+        except (InvalidListing, AdbFailure):
+            raise web.HTTPBadGateway(text="Could not read the phone video folder")
+        return web.json_response({"folder": folder, "videos": [asdict(entry) for entry in entries]})
+
     async def post_camera(request):
         require_local_origin_and_token(request)
         try:
@@ -92,6 +106,7 @@ def create_app(controller, token: str) -> web.Application:
     app.router.add_get("/", page)
     app.router.add_get("/{name:app\\.js|styles\\.css}", asset)
     app.router.add_get("/api/status", status)
+    app.router.add_get("/api/videos", videos)
     app.router.add_post("/api/camera", post_camera)
     app.router.add_post("/api/verification", post_verification)
     return app

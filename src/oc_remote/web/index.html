@@ -36,6 +36,16 @@
       <p id="verificationHelp">أوقف الفحص قبل استعمال الهاتف بنفسك. يمكنك تشغيله بعدها لقراءة الحالة من جديد.</p>
       <button id="verification" type="button">إيقاف الفحص</button>
     </section>
+
+    <section aria-labelledby="videosHeading">
+      <h2 id="videosHeading">الفيديوهات المكتملة</h2>
+      <label for="phoneFolder" id="phoneFolderLabel">مجلد Open Camera على الهاتف</label>
+      <input id="phoneFolder" type="text" value="/sdcard/DCIM/OpenCamera" spellcheck="false">
+      <button id="refreshVideos" type="button">عرض الفيديوهات</button>
+      <p id="videosHint">اختر الملفات بمربعات الاختيار. ستظهر أوامر النسخ والإدارة هنا.</p>
+      <p id="videosMessage"></p>
+      <ul id="videos"></ul>
+    </section>
   </main>
 </body>
 </html>

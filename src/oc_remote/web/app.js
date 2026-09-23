@@ -6,6 +6,9 @@ const labels = {
     language: "اللغة", cameraHeading: "التسجيل", verificationHeading: "الفحص واستعمال الهاتف",
     verificationHelp: "أوقف الفحص قبل استعمال الهاتف بنفسك. يمكنك تشغيله بعدها لقراءة الحالة من جديد.",
     cameraHint: "الأزرار متاحة بعد التحقق من حالة Open Camera.",
+    videosHeading: "الفيديوهات المكتملة", phoneFolderLabel: "مجلد Open Camera على الهاتف",
+    refreshVideos: "عرض الفيديوهات", videosHint: "اختر الملفات بمربعات الاختيار. ستظهر أوامر النسخ والإدارة هنا.",
+    noVideos: "لا توجد فيديوهات في هذا المجلد.", videosError: "تعذرت قراءة فيديوهات الهاتف.", bytes: "بايت",
     start: "بدء التسجيل", stop: "إنهاء التسجيل", pause: "إيقاف مؤقت", resume: "استئناف",
     unknown: "حالة التسجيل غير معروفة", idle: "جاهز للتسجيل", recording: "جارٍ التسجيل", paused: "التسجيل متوقف مؤقتًا",
     verificationOn: "إيقاف الفحص", verificationOff: "تشغيل الفحص", pending: "جارٍ التحقق من النتيجة",
@@ -29,6 +32,9 @@ const labels = {
     language: "Language", cameraHeading: "Recording", verificationHeading: "Verification and phone use",
     verificationHelp: "Stop verification before using the phone yourself. Start it again to read the current state.",
     cameraHint: "Recording buttons are available after Open Camera state is verified.",
+    videosHeading: "Completed videos", phoneFolderLabel: "Open Camera folder on phone",
+    refreshVideos: "Show videos", videosHint: "Select files with checkboxes. Copy and management commands will appear here.",
+    noVideos: "No videos in this folder.", videosError: "Could not read phone videos.", bytes: "bytes",
     start: "Start recording", stop: "Stop recording", pause: "Pause", resume: "Resume",
     unknown: "Recording state unknown", idle: "Ready to record", recording: "Recording", paused: "Recording paused",
     verificationOn: "Stop verification", verificationOff: "Start verification", pending: "Checking the result",
@@ -56,6 +62,7 @@ const languageSelect = document.getElementById("language");
 const token = document.querySelector('meta[name="session-token"]').content;
 let language = "ar";
 let current = { state: "unknown", verification_enabled: true, busy: false, message: "" };
+let currentVideos = null;
 
 function renderCamera(status) {
   const words = labels[language];
@@ -77,11 +84,46 @@ function render() {
   document.documentElement.lang = language;
   document.documentElement.dir = language === "ar" ? "rtl" : "ltr";
   document.title = words.title;
-  for (const id of ["title", "subtitle", "cameraHeading", "verificationHeading", "verificationHelp", "cameraHint"]) {
+  for (const id of ["title", "subtitle", "cameraHeading", "verificationHeading", "verificationHelp", "cameraHint", "videosHeading", "videosHint", "refreshVideos", "phoneFolderLabel"]) {
     document.getElementById(id).textContent = words[id];
   }
   document.getElementById("languageLabel").textContent = words.language;
   renderCamera(current);
+  if (currentVideos !== null) renderVideos(currentVideos);
+}
+
+function renderVideos(entries) {
+  const list = document.getElementById("videos");
+  const selected = new Set([...list.querySelectorAll('input:checked')].map(box => box.value));
+  list.replaceChildren();
+  const words = labels[language];
+  document.getElementById("videosMessage").textContent = entries.length ? "" : words.noVideos;
+  for (const entry of entries) {
+    const item = document.createElement("li");
+    const label = document.createElement("label");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = entry.name;
+    checkbox.checked = selected.has(entry.name);
+    const date = new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(new Date(entry.modified * 1000));
+    const size = new Intl.NumberFormat(language).format(entry.size);
+    label.append(checkbox, document.createTextNode(`${entry.name} — ${size} ${words.bytes} — ${date}`));
+    item.append(label);
+    list.append(item);
+  }
+}
+
+async function refreshVideos() {
+  const folder = document.getElementById("phoneFolder").value;
+  try {
+    const response = await fetch(`/api/videos?folder=${encodeURIComponent(folder)}`, { cache: "no-store" });
+    if (!response.ok) throw new Error("videos request failed");
+    const payload = await response.json();
+    currentVideos = payload.videos;
+    renderVideos(currentVideos);
+  } catch (_) {
+    document.getElementById("videosMessage").textContent = labels[language].videosError;
+  }
 }
 
 async function refresh() {
@@ -129,5 +171,7 @@ verificationButton.addEventListener("click", async () => {
   }
 });
 languageSelect.addEventListener("change", () => { language = languageSelect.value; render(); });
+document.getElementById("refreshVideos").addEventListener("click", refreshVideos);
 refresh();
+refreshVideos();
 setInterval(refresh, 1000);

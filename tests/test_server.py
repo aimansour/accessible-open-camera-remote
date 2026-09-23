@@ -99,3 +99,22 @@ async def test_page_serves_session_token_and_web_assets(client):
     script = await http.get("/app.js")
     assert script.status == 200
     assert "renderCamera" in await script.text()
+
+
+async def test_video_catalog_returns_selected_folder_entries(client):
+    http, controller = client
+
+    class FakeAdb:
+        async def run(self, *args, **kwargs):
+            return b"clip.mp4\x004\x001700000000\x00"
+
+    controller.adb = FakeAdb()
+    response = await http.get("/api/videos?folder=/sdcard/DCIM/OpenCamera")
+    assert response.status == 200
+    assert (await response.json())["videos"][0]["name"] == "clip.mp4"
+
+
+async def test_catalog_rejects_folder_outside_shared_storage(client):
+    http, _ = client
+    response = await http.get("/api/videos?folder=/data/local/tmp")
+    assert response.status == 400

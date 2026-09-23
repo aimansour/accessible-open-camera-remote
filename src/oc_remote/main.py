@@ -6,16 +6,31 @@ import os
 import secrets
 import shutil
 import subprocess
+import sys
 import webbrowser
 from pathlib import Path
 
 from aiohttp import web
 
-from .adb import AdbClient
-from .audio import ToneSink
-from .camera import CameraController
-from .diagnostics import DiagnosticLog
-from .server import CAMERA_TASKS_KEY, TRANSFER_TASKS_KEY, create_app
+from oc_remote.adb import AdbClient
+from oc_remote.audio import ToneSink
+from oc_remote.camera import CameraController
+from oc_remote.diagnostics import DiagnosticLog
+from oc_remote.server import CAMERA_TASKS_KEY, TRANSFER_TASKS_KEY, create_app
+
+
+def resolve_adb_path(requested: str | None = None) -> Path:
+    if getattr(sys, "frozen", False):
+        bundled = Path(sys._MEIPASS) / "adb"
+        needed = ("adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll", "NOTICE.txt")
+        if all((bundled / name).is_file() for name in needed):
+            return bundled / "adb.exe"
+        if requested is None:
+            raise RuntimeError("Bundled ADB is incomplete; reinstall the release or use --adb PATH")
+    candidate = requested or shutil.which("adb")
+    if candidate is None or not Path(candidate).is_file():
+        raise RuntimeError("ADB was not found; install Android Platform Tools or use --adb PATH")
+    return Path(candidate)
 
 
 def choose_device(adb_path: Path, requested: str | None) -> str:
@@ -74,12 +89,10 @@ async def serve(serial: str, adb_path: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Accessible Open Camera Remote")
     parser.add_argument("--serial", help="Exact wireless ADB serial of the phone")
+    parser.add_argument("--adb", help="Explicit adb.exe path if the bundled copy is unavailable")
     args = parser.parse_args()
-    adb_command = shutil.which("adb")
-    if not adb_command:
-        parser.error("ADB was not found")
-    adb_path = Path(adb_command)
     try:
+        adb_path = resolve_adb_path(args.adb)
         serial = choose_device(adb_path, args.serial)
         asyncio.run(serve(serial, adb_path))
     except KeyboardInterrupt:

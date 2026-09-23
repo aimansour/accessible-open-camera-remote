@@ -12,6 +12,8 @@ const labels = {
     transferHeading: "نسخ الفيديوهات إلى الكمبيوتر", pcFolderLabel: "مجلد الحفظ على الكمبيوتر", copy: "نسخ المحدد",
     transferPending: "جارٍ نسخ الملفات", transferFinished: "اكتملت المجموعة", transferError: "تعذر قراءة تقدم النسخ",
     transferCount: "ملفات مكتملة", stages: { waiting: "بانتظار النسخ", copying: "جارٍ النسخ", hashing: "جارٍ فحص البصمة", verified: "نسخة مؤكدة", failed: "فشل النسخ", uncertain: "نتيجة النقل غير مؤكدة" },
+    uncertainMoveDetail: "نسخة الكمبيوتر مؤكدة؛ حذف الأصل من الهاتف غير مؤكد. افحص الملفين قبل أي إجراء آخر.",
+    failedCopyDetail: "تعذر تأكيد النسخة. راجع الاتصال والمساحة ثم حاول من جديد.",
     manageHeading: "إدارة فيديو واحد", manageHint: "اختر فيديو واحدًا بعد إنهاء التسجيل والتحقق من حالته.",
     move: "نقل المحدد إلى الكمبيوتر", newStemLabel: "الاسم الجديد من دون الامتداد", rename: "إعادة التسمية",
     delete: "حذف الفيديو", confirmDelete: "تأكيد الحذف", cancelDelete: "إلغاء الحذف",
@@ -50,6 +52,8 @@ const labels = {
     transferHeading: "Copy videos to PC", pcFolderLabel: "PC destination folder", copy: "Copy selected",
     transferPending: "Copying files", transferFinished: "Batch complete", transferError: "Could not read transfer progress",
     transferCount: "files complete", stages: { waiting: "Waiting", copying: "Copying", hashing: "Checking SHA-256", verified: "Verified copy", failed: "Copy failed", uncertain: "Uncertain move" },
+    uncertainMoveDetail: "The PC copy is verified; phone source removal is uncertain. Check both files before another action.",
+    failedCopyDetail: "The copy could not be verified. Check the connection and free space, then retry.",
     manageHeading: "Manage one video", manageHint: "Select one video after recording has stopped and its state is verified.",
     move: "Move selected to PC", newStemLabel: "New name without extension", rename: "Rename",
     delete: "Delete video", confirmDelete: "Confirm deletion", cancelDelete: "Cancel deletion",
@@ -228,7 +232,9 @@ function renderTransfers(job) {
   for (const [name, stage] of Object.entries(job.stages)) {
     const result = job.results.find(item => item.name === name);
     const item = document.createElement("li");
-    item.textContent = `${name} — ${words.stages[stage] || stage}${result && result.outcome === "failed" ? ` — ${result.message}` : ""}`;
+    const detail = result?.outcome === "uncertain" ? words.uncertainMoveDetail
+      : result?.outcome === "failed" ? words.failedCopyDetail : "";
+    item.textContent = `${name} — ${words.stages[stage] || stage}${detail ? ` — ${detail}` : ""}`;
     list.append(item);
   }
   updateCopyAvailability();

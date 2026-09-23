@@ -58,14 +58,19 @@ ALLOWED = {
 
 
 class CameraController:
-    def __init__(self, adb, tone: TonePort):
+    def __init__(self, adb, tone: TonePort, diagnostics=None):
         self.adb = adb
         self.tone = tone
+        self._diagnostics = diagnostics
         self._state = CaptureState.UNKNOWN
         self._verification_enabled = True
         self._busy = False
         self._message = "Waiting for a fresh phone state"
         self._task: asyncio.Task | None = None
+
+    def _record(self, event: str) -> None:
+        if self._diagnostics is not None:
+            self._diagnostics.record(event)
 
     def status(self) -> CameraStatus:
         return CameraStatus(self._state, self._verification_enabled, self._busy, self._message)
@@ -87,6 +92,7 @@ class CameraController:
             )
         except (AdbFailure, InvalidDump, asyncio.TimeoutError):
             self._message = "Could not read Open Camera; check the phone and connection"
+        self._record("camera_verified" if self._state is not CaptureState.UNKNOWN else "camera_uncertain")
         return self.status()
 
     async def stop_verification(self) -> CameraStatus:
@@ -132,6 +138,7 @@ class CameraController:
                 self._state = CaptureState.UNKNOWN
                 self._message = "Unlock the phone and bring Open Camera to the foreground"
                 self.tone.failure()
+                self._record("camera_uncertain")
             else:
                 await self.adb.press(KEY_BY_ACTION[action])
                 verified = False
@@ -147,10 +154,12 @@ class CameraController:
                     self._state = state
                     self._message = "Camera state verified"
                     self.tone.success()
+                    self._record("camera_verified")
                 else:
                     self._state = CaptureState.UNKNOWN
                     self._message = "Command sent, but the camera state could not be confirmed"
                     self.tone.failure()
+                    self._record("camera_uncertain")
         except asyncio.CancelledError:
             self._state = CaptureState.UNKNOWN
             self._message = "Verification stopped"
@@ -159,6 +168,7 @@ class CameraController:
             self._state = CaptureState.UNKNOWN
             self._message = "Camera result uncertain; check the phone, then verify again"
             self.tone.failure()
+            self._record("camera_uncertain")
         finally:
             self._busy = False
         return self.status()

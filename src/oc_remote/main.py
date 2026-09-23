@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import os
 import secrets
 import shutil
 import subprocess
@@ -13,7 +14,8 @@ from aiohttp import web
 from .adb import AdbClient
 from .audio import ToneSink
 from .camera import CameraController
-from .server import CAMERA_TASKS_KEY, create_app
+from .diagnostics import DiagnosticLog
+from .server import CAMERA_TASKS_KEY, TRANSFER_TASKS_KEY, create_app
 
 
 def choose_device(adb_path: Path, requested: str | None) -> str:
@@ -30,10 +32,27 @@ def choose_device(adb_path: Path, requested: str | None) -> str:
     return connected[0]
 
 
+async def _stop_tasks(app) -> None:
+    tasks = tuple(app[CAMERA_TASKS_KEY] | app[TRANSFER_TASKS_KEY])
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def serve(serial: str, adb_path: Path) -> None:
-    controller = CameraController(AdbClient(serial, adb_path), ToneSink())
+    probe = AdbClient(serial, adb_path)
+    try:
+        model = (await probe.run("shell", "getprop", "ro.product.model", timeout=5)).decode(
+            "utf-8", errors="replace").strip()
+    except Exception:
+        model = "unknown"
+    data_root = Path(os.getenv("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
+    diagnostics = DiagnosticLog(data_root / "OpenCameraRemote" / "diagnostics.jsonl", model)
+    adb = AdbClient(serial, adb_path, diagnostics=diagnostics)
+    diagnostics.record("service_started")
+    controller = CameraController(adb, ToneSink(), diagnostics=diagnostics)
     await controller.start_session()
-    app = create_app(controller, secrets.token_urlsafe(32))
+    app = create_app(controller, secrets.token_urlsafe(32), diagnostics=diagnostics)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "127.0.0.1", 0)
@@ -45,10 +64,9 @@ async def serve(serial: str, adb_path: Path) -> None:
     try:
         await asyncio.Event().wait()
     finally:
-        for task in tuple(app[CAMERA_TASKS_KEY]):
-            task.cancel()
-        await asyncio.gather(*app[CAMERA_TASKS_KEY], return_exceptions=True)
+        await _stop_tasks(app)
         await runner.cleanup()
+        diagnostics.record("service_stopped")
 
 
 def main() -> None:

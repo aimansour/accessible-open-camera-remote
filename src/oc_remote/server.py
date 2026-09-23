@@ -44,7 +44,7 @@ def require_local_origin_and_token(request: web.Request) -> None:
         raise web.HTTPForbidden(text="Invalid session token")
 
 
-def create_app(controller, token: str) -> web.Application:
+def create_app(controller, token: str, diagnostics=None) -> web.Application:
     if not token:
         raise ValueError("A session token is required")
     app = web.Application()
@@ -55,6 +55,10 @@ def create_app(controller, token: str) -> web.Application:
     app[TRANSFER_JOB_KEY] = {"total": 0, "stages": {}, "results": [], "running": False, "completed": 0}
     app[VERIFIED_CATALOG_KEY] = {}
     app[FILE_LOCK_KEY] = asyncio.Lock()
+
+    def record(event: str) -> None:
+        if diagnostics is not None:
+            diagnostics.record(event)
 
     def require_idle_for_mutation():
         camera = controller.status()
@@ -115,33 +119,37 @@ def create_app(controller, token: str) -> web.Application:
         require_local_origin_and_token(request)
         if app[TRANSFER_JOB_KEY]["running"] or app[FILE_LOCK_KEY].locked():
             raise web.HTTPConflict(text="A transfer is already running")
+        await app[FILE_LOCK_KEY].acquire()
         try:
-            payload = await request.json()
-            names = payload["names"]
-            folder = validate_folder(payload.get("folder", DEFAULT_PHONE_FOLDER))
-            destination = Path(payload["destination"]).expanduser()
-            if (not isinstance(names, list) or not names or len(names) > 100
-                    or any(not isinstance(name, str) for name in names)
-                    or len(set(names)) != len(names) or not destination.is_absolute()):
-                raise ValueError
-        except (ValueError, KeyError, TypeError):
-            raise web.HTTPBadRequest(text="Choose videos and an absolute PC folder")
-
-        camera = controller.status()
-        if camera.state is CaptureState.IDLE and camera.verification_enabled:
             try:
-                latest = await list_videos(controller.adb, folder)
-            except (InvalidListing, AdbFailure):
-                raise web.HTTPBadGateway(text="Could not read selected phone videos")
-            available = {entry.name: entry for entry in latest}
-            app[VERIFIED_CATALOG_KEY][folder] = available
-        elif not camera.verification_enabled:
-            available = app[VERIFIED_CATALOG_KEY].get(folder, {})
-        else:
-            raise web.HTTPConflict(text="Finish recording or verify camera state before copying")
-        if any(name not in available for name in names):
-            raise web.HTTPBadRequest(text="A selected video is no longer available as completed")
-        entries = [available[name] for name in names]
+                payload = await request.json()
+                names = payload["names"]
+                folder = validate_folder(payload.get("folder", DEFAULT_PHONE_FOLDER))
+                destination = Path(payload["destination"]).expanduser()
+                if (not isinstance(names, list) or not names or len(names) > 100
+                        or any(not isinstance(name, str) for name in names)
+                        or len(set(names)) != len(names) or not destination.is_absolute()):
+                    raise ValueError
+            except (ValueError, KeyError, TypeError):
+                raise web.HTTPBadRequest(text="Choose videos and an absolute PC folder")
+            camera = controller.status()
+            if camera.state is CaptureState.IDLE and camera.verification_enabled:
+                try:
+                    latest = await list_videos(controller.adb, folder)
+                except (InvalidListing, AdbFailure):
+                    raise web.HTTPBadGateway(text="Could not read selected phone videos")
+                available = {entry.name: entry for entry in latest}
+                app[VERIFIED_CATALOG_KEY][folder] = available
+            elif not camera.verification_enabled:
+                available = app[VERIFIED_CATALOG_KEY].get(folder, {})
+            else:
+                raise web.HTTPConflict(text="Finish recording or verify camera state before copying")
+            if any(name not in available for name in names):
+                raise web.HTTPBadRequest(text="A selected video is no longer available as completed")
+            entries = [available[name] for name in names]
+        except BaseException:
+            app[FILE_LOCK_KEY].release()
+            raise
         job = app[TRANSFER_JOB_KEY]
         job.clear()
         job.update({"id": uuid4().hex, "total": len(entries), "stages": {name: "waiting" for name in names},
@@ -157,16 +165,20 @@ def create_app(controller, token: str) -> web.Application:
                 job["completed"] = len(results)
                 if all(result.outcome == "verified" for result in results):
                     controller.tone.success()
+                    record("copy_verified")
                 else:
                     controller.tone.failure()
+                    record("copy_failed")
             except Exception:
                 job["results"] = [{"name": name, "outcome": "failed", "destination": None,
                                    "message": "Unexpected transfer error"} for name in names]
                 job["completed"] = len(names)
                 job["stages"] = {name: "failed" for name in names}
                 controller.tone.failure()
+                record("copy_failed")
             finally:
                 job["running"] = False
+                app[FILE_LOCK_KEY].release()
 
         task = asyncio.create_task(perform_copy())
         app[TRANSFER_TASKS_KEY].add(task)
@@ -198,9 +210,11 @@ def create_app(controller, token: str) -> web.Application:
                 raise web.HTTPBadRequest(text="Invalid new video name")
             except (UncertainMutation, MediaIndexError, AdbFailure):
                 controller.tone.failure()
+                record("rename_uncertain")
                 raise web.HTTPConflict(text="Rename result uncertain; inspect the phone")
             app[VERIFIED_CATALOG_KEY].pop(folder, None)
             controller.tone.success()
+            record("rename_verified")
             return web.json_response(asdict(result))
 
     async def post_delete(request):
@@ -223,9 +237,11 @@ def create_app(controller, token: str) -> web.Application:
                 await delete_one(controller.adb, entry, folder, confirmed_name)
             except (UncertainMutation, MediaIndexError, AdbFailure):
                 controller.tone.failure()
+                record("delete_uncertain")
                 raise web.HTTPConflict(text="Deletion result uncertain; inspect the phone")
             app[VERIFIED_CATALOG_KEY].pop(folder, None)
             controller.tone.success()
+            record("delete_verified")
             return web.json_response({"deleted": name})
 
     async def post_move(request):
@@ -262,14 +278,17 @@ def create_app(controller, token: str) -> web.Application:
                 if result.outcome == "verified":
                     app[VERIFIED_CATALOG_KEY].pop(folder, None)
                     controller.tone.success()
+                    record("move_verified")
                 else:
                     controller.tone.failure()
+                    record("move_uncertain")
             except Exception:
                 job["stages"][name] = "uncertain"
                 job["results"] = [{"name": name, "outcome": "uncertain", "destination": None,
                                    "message": "Move result uncertain; inspect phone and PC"}]
                 job["completed"] = 1
                 controller.tone.failure()
+                record("move_uncertain")
             finally:
                 job["running"] = False
                 app[FILE_LOCK_KEY].release()

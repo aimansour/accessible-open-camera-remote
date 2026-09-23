@@ -5,7 +5,7 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from oc_remote.camera import CameraAction, CameraStatus, CommandBusy
-from oc_remote.server import create_app
+from oc_remote.server import FILE_LOCK_KEY, create_app
 from oc_remote.state import CaptureState
 
 
@@ -159,8 +159,10 @@ async def test_copy_batch_returns_202_and_reports_progress(client, monkeypatch, 
     assert response.status == 202
     status = await http.get("/api/transfers")
     assert (await status.json())["total"] == 1
+    assert http.server.app[FILE_LOCK_KEY].locked()
     release.set()
     await asyncio.sleep(0)
+    assert not http.server.app[FILE_LOCK_KEY].locked()
     assert controller.tone.events == ["success"]
 
 
@@ -176,6 +178,51 @@ async def test_copy_rejects_unlisted_name(client, tmp_path):
         "names": ["other.mp4"], "folder": "/sdcard/DCIM/OpenCamera", "destination": str(tmp_path),
     }, headers=auth(http))
     assert response.status == 400
+
+
+async def test_bad_copy_json_releases_file_lock(client):
+    http, _ = client
+    response = await http.post("/api/copy", data="{", headers={
+        **auth(http), "Content-Type": "application/json",
+    })
+    assert response.status == 400
+    assert not http.server.app[FILE_LOCK_KEY].locked()
+
+
+async def test_copy_outcome_diagnostic_uses_code_without_filename(monkeypatch, tmp_path):
+    class Log:
+        def __init__(self):
+            self.events = []
+
+        def record(self, event, **fields):
+            self.events.append((event, fields))
+
+    class Adb:
+        async def run(self, *args, **kwargs):
+            return b"private recording.mp4\x004\x001.0\x00"
+
+    class Tone:
+        def success(self):
+            pass
+
+        def failure(self):
+            pass
+
+    async def copied(*args, **kwargs):
+        from oc_remote.transfer import TransferResult
+        return [TransferResult("private recording.mp4", "verified", str(tmp_path / "copy"), "ok")]
+
+    monkeypatch.setattr("oc_remote.server.copy_many", copied)
+    controller, log = FakeController(), Log()
+    controller.adb, controller.tone = Adb(), Tone()
+    async with TestClient(TestServer(create_app(controller, "valid", diagnostics=log))) as http:
+        response = await http.post("/api/copy", json={
+            "names": ["private recording.mp4"], "destination": str(tmp_path),
+        }, headers=auth(http))
+        assert response.status == 202
+        await asyncio.sleep(0)
+    assert [event for event, _ in log.events] == ["copy_verified"]
+    assert "private recording.mp4" not in repr(log.events)
 
 
 @pytest.mark.parametrize("state,enabled", [

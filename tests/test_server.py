@@ -14,9 +14,11 @@ class FakeController:
         self.calls = []
         self.release = asyncio.Event()
         self.busy = False
+        self.state = CaptureState.IDLE
+        self.verification_enabled = True
 
     def status(self):
-        return CameraStatus(CaptureState.IDLE, True, self.busy, "Ready")
+        return CameraStatus(self.state, self.verification_enabled, self.busy, "Ready")
 
     def submit(self, action):
         if self.busy:
@@ -174,3 +176,67 @@ async def test_copy_rejects_unlisted_name(client, tmp_path):
         "names": ["other.mp4"], "folder": "/sdcard/DCIM/OpenCamera", "destination": str(tmp_path),
     }, headers=auth(http))
     assert response.status == 400
+
+
+@pytest.mark.parametrize("state,enabled", [
+    (CaptureState.RECORDING, True), (CaptureState.PAUSED, True),
+    (CaptureState.UNKNOWN, True), (CaptureState.UNKNOWN, False),
+])
+@pytest.mark.parametrize("endpoint,payload", [
+    ("/api/move", {"name": "clip.mp4", "destination": "C:\\Videos"}),
+    ("/api/rename", {"name": "clip.mp4", "new_stem": "new"}),
+    ("/api/delete", {"name": "clip.mp4", "confirmed_name": "clip.mp4"}),
+])
+async def test_phone_mutations_reject_unverified_or_active_recording(client, state, enabled, endpoint, payload):
+    http, controller = client
+    controller.state = state
+    controller.verification_enabled = enabled
+    body = {"folder": "/sdcard/DCIM/OpenCamera", **payload}
+    response = await http.post(endpoint, json=body, headers=auth(http))
+    assert response.status == 409
+
+
+async def test_delete_requires_matching_explicit_confirmation(client):
+    http, controller = client
+
+    class FakeAdb:
+        async def run(self, *args, **kwargs):
+            return b"clip.mp4\x004\x001.0\x00"
+
+    controller.adb = FakeAdb()
+    response = await http.post("/api/delete", json={
+        "folder": "/sdcard/DCIM/OpenCamera", "name": "clip.mp4", "confirmed_name": "other.mp4",
+    }, headers=auth(http))
+    assert response.status == 400
+
+
+async def test_move_rejects_relative_destination_without_starting_transfer(client):
+    http, controller = client
+    response = await http.post("/api/move", json={
+        "folder": "/sdcard/DCIM/OpenCamera", "name": "clip.mp4", "destination": "relative/folder",
+    }, headers=auth(http))
+    assert response.status == 400
+    assert controller.calls == []
+
+
+async def test_malformed_media_index_is_reported_as_uncertain(client):
+    http, controller = client
+
+    class FakeAdb:
+        async def run(self, *args, **kwargs):
+            if "content" in args:
+                return b"unexpected media row\n"
+            if "0" in args and "-maxdepth" in args:
+                return b"4\x001.0\x00"
+            return b"clip.mp4\x004\x001.0\x00"
+
+    class FakeTone:
+        def failure(self):
+            pass
+
+    controller.adb = FakeAdb()
+    controller.tone = FakeTone()
+    response = await http.post("/api/delete", json={
+        "folder": "/sdcard/DCIM/OpenCamera", "name": "clip.mp4", "confirmed_name": "clip.mp4",
+    }, headers=auth(http))
+    assert response.status == 409

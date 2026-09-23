@@ -55,6 +55,22 @@
       <p id="transferSummary"></p>
       <ul id="transferResults"></ul>
     </section>
+
+    <section aria-labelledby="manageHeading">
+      <h2 id="manageHeading">إدارة فيديو واحد</h2>
+      <p id="manageHint">اختر فيديو واحدًا بعد إنهاء التسجيل والتحقق من حالته.</p>
+      <button id="move" type="button" aria-disabled="true">نقل المحدد إلى الكمبيوتر</button>
+      <label for="newStem" id="newStemLabel">الاسم الجديد من دون الامتداد</label>
+      <input id="newStem" type="text" spellcheck="false">
+      <button id="rename" type="button" aria-disabled="true">إعادة التسمية</button>
+      <button id="delete" type="button" aria-disabled="true">حذف الفيديو</button>
+      <div id="confirmationBox" hidden>
+        <p id="deleteConfirmation"></p>
+        <button id="confirmDelete" type="button">تأكيد الحذف</button>
+        <button id="cancelDelete" type="button">إلغاء الحذف</button>
+      </div>
+      <p id="manageResult"></p>
+    </section>
   </main>
 </body>
 </html>

@@ -11,7 +11,16 @@ const labels = {
     noVideos: "لا توجد فيديوهات في هذا المجلد.", videosError: "تعذرت قراءة فيديوهات الهاتف.", bytes: "بايت",
     transferHeading: "نسخ الفيديوهات إلى الكمبيوتر", pcFolderLabel: "مجلد الحفظ على الكمبيوتر", copy: "نسخ المحدد",
     transferPending: "جارٍ نسخ الملفات", transferFinished: "اكتملت المجموعة", transferError: "تعذر قراءة تقدم النسخ",
-    transferCount: "ملفات مكتملة", stages: { waiting: "بانتظار النسخ", copying: "جارٍ النسخ", hashing: "جارٍ فحص البصمة", verified: "نسخة مؤكدة", failed: "فشل النسخ" },
+    transferCount: "ملفات مكتملة", stages: { waiting: "بانتظار النسخ", copying: "جارٍ النسخ", hashing: "جارٍ فحص البصمة", verified: "نسخة مؤكدة", failed: "فشل النسخ", uncertain: "نتيجة النقل غير مؤكدة" },
+    manageHeading: "إدارة فيديو واحد", manageHint: "اختر فيديو واحدًا بعد إنهاء التسجيل والتحقق من حالته.",
+    move: "نقل المحدد إلى الكمبيوتر", newStemLabel: "الاسم الجديد من دون الامتداد", rename: "إعادة التسمية",
+    delete: "حذف الفيديو", confirmDelete: "تأكيد الحذف", cancelDelete: "إلغاء الحذف",
+    deleteQuestion: "تأكيد حذف الفيديو نهائيًا من الهاتف:", deleteCancelled: "أُلغي الحذف.",
+    deleted: "تم حذف الفيديو والتحقق من فهرس Android.", renamed: "تغير الاسم وتم التحقق من فهرس Android.",
+    moveStarted: "بدأ نقل الفيديو. ستظهر النتيجة في قسم النسخ.",
+    invalidInput: "تحقق من الاسم أو اختيار الملف ثم حاول من جديد.",
+    operationConflict: "لا يمكن تنفيذ العملية الآن؛ تحقق من حالة التسجيل والملف.",
+    operationFailed: "تعذرت العملية؛ افحص الهاتف والاتصال ثم حدّث القائمة.",
     start: "بدء التسجيل", stop: "إنهاء التسجيل", pause: "إيقاف مؤقت", resume: "استئناف",
     unknown: "حالة التسجيل غير معروفة", idle: "جاهز للتسجيل", recording: "جارٍ التسجيل", paused: "التسجيل متوقف مؤقتًا",
     verificationOn: "إيقاف الفحص", verificationOff: "تشغيل الفحص", pending: "جارٍ التحقق من النتيجة",
@@ -40,7 +49,16 @@ const labels = {
     noVideos: "No videos in this folder.", videosError: "Could not read phone videos.", bytes: "bytes",
     transferHeading: "Copy videos to PC", pcFolderLabel: "PC destination folder", copy: "Copy selected",
     transferPending: "Copying files", transferFinished: "Batch complete", transferError: "Could not read transfer progress",
-    transferCount: "files complete", stages: { waiting: "Waiting", copying: "Copying", hashing: "Checking SHA-256", verified: "Verified copy", failed: "Copy failed" },
+    transferCount: "files complete", stages: { waiting: "Waiting", copying: "Copying", hashing: "Checking SHA-256", verified: "Verified copy", failed: "Copy failed", uncertain: "Uncertain move" },
+    manageHeading: "Manage one video", manageHint: "Select one video after recording has stopped and its state is verified.",
+    move: "Move selected to PC", newStemLabel: "New name without extension", rename: "Rename",
+    delete: "Delete video", confirmDelete: "Confirm deletion", cancelDelete: "Cancel deletion",
+    deleteQuestion: "Confirm permanent deletion from the phone:", deleteCancelled: "Deletion cancelled.",
+    deleted: "Video removed and Android media index verified.", renamed: "Name changed and Android media index verified.",
+    moveStarted: "Video move started. Its result will appear in the transfer section.",
+    invalidInput: "Check the name or selected video and try again.",
+    operationConflict: "This action is unavailable now; verify recording state and the selected file.",
+    operationFailed: "Action failed; check the phone and connection, then refresh the list.",
     start: "Start recording", stop: "Stop recording", pause: "Pause", resume: "Resume",
     unknown: "Recording state unknown", idle: "Ready to record", recording: "Recording", paused: "Recording paused",
     verificationOn: "Stop verification", verificationOff: "Start verification", pending: "Checking the result",
@@ -65,6 +83,10 @@ const cameraButton = document.getElementById("camera");
 const pauseButton = document.getElementById("pause");
 const verificationButton = document.getElementById("verification");
 const copyButton = document.getElementById("copy");
+const moveButton = document.getElementById("move");
+const renameButton = document.getElementById("rename");
+const deleteButton = document.getElementById("delete");
+const confirmDeleteButton = document.getElementById("confirmDelete");
 const languageSelect = document.getElementById("language");
 const token = document.querySelector('meta[name="session-token"]').content;
 let language = "ar";
@@ -72,6 +94,8 @@ let current = { state: "unknown", verification_enabled: true, busy: false, messa
 let currentVideos = null;
 let transferJob = null;
 let lastTransferJson = null;
+let pendingDeleteName = null;
+let fileBusy = false;
 
 function renderCamera(status) {
   const words = labels[language];
@@ -86,6 +110,7 @@ function renderCamera(status) {
   document.getElementById("messageText").textContent = status.message === "__disconnected__" ? words.disconnected
     : !status.verification_enabled ? words.verificationDisabled
     : status.busy ? words.pending : (words.messages[status.message] || status.message);
+  updateMutationAvailability();
 }
 
 function render() {
@@ -93,13 +118,16 @@ function render() {
   document.documentElement.lang = language;
   document.documentElement.dir = language === "ar" ? "rtl" : "ltr";
   document.title = words.title;
-  for (const id of ["title", "subtitle", "cameraHeading", "verificationHeading", "verificationHelp", "cameraHint", "videosHeading", "videosHint", "refreshVideos", "phoneFolderLabel", "transferHeading", "pcFolderLabel", "copy"]) {
+  for (const id of ["title", "subtitle", "cameraHeading", "verificationHeading", "verificationHelp", "cameraHint", "videosHeading", "videosHint", "refreshVideos", "phoneFolderLabel", "transferHeading", "pcFolderLabel", "copy", "manageHeading", "manageHint", "move", "newStemLabel", "rename", "delete", "confirmDelete", "cancelDelete"]) {
     document.getElementById(id).textContent = words[id];
   }
   document.getElementById("languageLabel").textContent = words.language;
   renderCamera(current);
   if (currentVideos !== null) renderVideos(currentVideos);
   if (transferJob !== null) renderTransfers(transferJob);
+  if (pendingDeleteName !== null && confirmDeleteButton.getAttribute("aria-disabled") !== "true") {
+    document.getElementById("deleteConfirmation").textContent = `${words.deleteQuestion} ${pendingDeleteName}`;
+  }
 }
 
 function renderVideos(entries) {
@@ -122,6 +150,7 @@ function renderVideos(entries) {
     list.append(item);
   }
   updateCopyAvailability();
+  updateMutationAvailability();
 }
 
 function selectedNames() {
@@ -130,6 +159,64 @@ function selectedNames() {
 
 function updateCopyAvailability() {
   copyButton.setAttribute("aria-disabled", String(selectedNames().length === 0 || (transferJob && transferJob.running)));
+}
+
+function updateMutationAvailability() {
+  const allowed = current.state === "idle" && current.verification_enabled && !current.busy && !fileBusy
+    && !(transferJob && transferJob.running) && selectedNames().length === 1;
+  for (const button of [moveButton, renameButton, deleteButton]) {
+    button.setAttribute("aria-disabled", String(!allowed));
+  }
+}
+
+function selectedOne() {
+  return selectedNames().length === 1 ? selectedNames()[0] : null;
+}
+
+async function mutationRequest(endpoint, payload) {
+  const response = await fetch(endpoint, {
+    method: "POST", headers: { "Content-Type": "application/json", "X-Session-Token": token },
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    const words = labels[language];
+    throw new Error(response.status === 400 ? words.invalidInput
+      : response.status === 409 ? words.operationConflict : words.operationFailed);
+  }
+  return response.json();
+}
+
+async function runMutation(action) {
+  const name = selectedOne();
+  if (!name || fileBusy) return;
+  fileBusy = true;
+  updateMutationAvailability();
+  const words = labels[language];
+  const folder = document.getElementById("phoneFolder").value;
+  try {
+    if (action === "move") {
+      await mutationRequest("/api/move", { folder, name, destination: document.getElementById("pcFolder").value });
+      document.getElementById("manageResult").textContent = words.moveStarted;
+      await refreshTransfers();
+    } else if (action === "rename") {
+      await mutationRequest("/api/rename", { folder, name, new_stem: document.getElementById("newStem").value });
+      document.getElementById("manageResult").textContent = words.renamed;
+      document.getElementById("newStem").value = "";
+      await refreshVideos();
+    } else if (action === "delete") {
+      await mutationRequest("/api/delete", { folder, name, confirmed_name: pendingDeleteName });
+      document.getElementById("manageResult").textContent = words.deleted;
+      document.getElementById("deleteConfirmation").textContent = words.deleted;
+      confirmDeleteButton.setAttribute("aria-disabled", "true");
+      pendingDeleteName = null;
+      await refreshVideos();
+    }
+  } catch (error) {
+    document.getElementById("manageResult").textContent = error.message;
+  } finally {
+    fileBusy = false;
+    updateMutationAvailability();
+  }
 }
 
 function renderTransfers(job) {
@@ -222,7 +309,12 @@ verificationButton.addEventListener("click", async () => {
 });
 languageSelect.addEventListener("change", () => { language = languageSelect.value; render(); });
 document.getElementById("refreshVideos").addEventListener("click", refreshVideos);
-document.getElementById("videos").addEventListener("change", updateCopyAvailability);
+document.getElementById("videos").addEventListener("change", () => {
+  updateCopyAvailability();
+  updateMutationAvailability();
+  pendingDeleteName = null;
+  document.getElementById("confirmationBox").hidden = true;
+});
 copyButton.addEventListener("click", async () => {
   if (copyButton.getAttribute("aria-disabled") === "true") return;
   try {
@@ -236,6 +328,32 @@ copyButton.addEventListener("click", async () => {
   } catch (error) {
     document.getElementById("transferSummary").textContent = error.message;
   }
+});
+moveButton.addEventListener("click", () => {
+  if (moveButton.getAttribute("aria-disabled") !== "true") runMutation("move");
+});
+renameButton.addEventListener("click", () => {
+  if (renameButton.getAttribute("aria-disabled") !== "true") runMutation("rename");
+});
+deleteButton.addEventListener("click", () => {
+  if (deleteButton.getAttribute("aria-disabled") === "true") return;
+  pendingDeleteName = selectedOne();
+  document.getElementById("deleteConfirmation").textContent = `${labels[language].deleteQuestion} ${pendingDeleteName}`;
+  confirmDeleteButton.setAttribute("aria-disabled", "false");
+  document.getElementById("confirmationBox").hidden = false;
+});
+confirmDeleteButton.addEventListener("click", () => {
+  if (confirmDeleteButton.getAttribute("aria-disabled") === "true" || pendingDeleteName !== selectedOne()) return;
+  runMutation("delete");
+});
+document.getElementById("cancelDelete").addEventListener("click", () => {
+  if (pendingDeleteName === null) {
+    document.getElementById("confirmationBox").hidden = true;
+    return;
+  }
+  pendingDeleteName = null;
+  confirmDeleteButton.setAttribute("aria-disabled", "true");
+  document.getElementById("deleteConfirmation").textContent = labels[language].deleteCancelled;
 });
 refresh();
 refreshVideos();

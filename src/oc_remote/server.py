@@ -9,8 +9,9 @@ from uuid import uuid4
 from aiohttp import web
 
 from .camera import CameraAction, CommandBusy, CommandUnavailable
-from .catalog import DEFAULT_PHONE_FOLDER, InvalidListing, list_videos, validate_folder
+from .catalog import DEFAULT_PHONE_FOLDER, InvalidListing, list_videos, validate_folder, validate_name
 from .adb import AdbFailure
+from .files import MediaIndexError, UncertainMutation, delete_one, move_one, rename_one
 from .state import CaptureState
 from .transfer import copy_many
 
@@ -21,6 +22,7 @@ CAMERA_TASKS_KEY = web.AppKey("camera_tasks", set)
 TRANSFER_TASKS_KEY = web.AppKey("transfer_tasks", set)
 TRANSFER_JOB_KEY = web.AppKey("transfer_job", dict)
 VERIFIED_CATALOG_KEY = web.AppKey("verified_catalog", dict)
+FILE_LOCK_KEY = web.AppKey("file_lock", asyncio.Lock)
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
 
@@ -52,6 +54,26 @@ def create_app(controller, token: str) -> web.Application:
     app[TRANSFER_TASKS_KEY] = set()
     app[TRANSFER_JOB_KEY] = {"total": 0, "stages": {}, "results": [], "running": False, "completed": 0}
     app[VERIFIED_CATALOG_KEY] = {}
+    app[FILE_LOCK_KEY] = asyncio.Lock()
+
+    def require_idle_for_mutation():
+        camera = controller.status()
+        if (camera.state is not CaptureState.IDLE or not camera.verification_enabled
+                or camera.busy):
+            raise web.HTTPConflict(text="Verify that recording has stopped before changing phone files")
+
+    async def selected_entry(folder, name):
+        try:
+            name = validate_name(name)
+            entries = await list_videos(controller.adb, folder)
+        except (ValueError, InvalidListing):
+            raise web.HTTPBadRequest(text="Invalid selected video")
+        except AdbFailure:
+            raise web.HTTPBadGateway(text="Could not read phone videos")
+        entry = next((item for item in entries if item.name == name), None)
+        if entry is None:
+            raise web.HTTPNotFound(text="Selected video no longer exists")
+        return entry
 
     async def page(request):
         require_local_host(request)
@@ -91,7 +113,7 @@ def create_app(controller, token: str) -> web.Application:
 
     async def post_copy(request):
         require_local_origin_and_token(request)
-        if app[TRANSFER_JOB_KEY]["running"]:
+        if app[TRANSFER_JOB_KEY]["running"] or app[FILE_LOCK_KEY].locked():
             raise web.HTTPConflict(text="A transfer is already running")
         try:
             payload = await request.json()
@@ -151,8 +173,116 @@ def create_app(controller, token: str) -> web.Application:
         task.add_done_callback(app[TRANSFER_TASKS_KEY].discard)
         return web.json_response({"accepted": True, "id": job["id"]}, status=202)
 
+    async def post_rename(request):
+        require_local_origin_and_token(request)
+        if app[TRANSFER_JOB_KEY]["running"]:
+            raise web.HTTPConflict(text="A transfer is running")
+        async with app[FILE_LOCK_KEY]:
+            require_idle_for_mutation()
+            try:
+                payload = await request.json()
+                folder = validate_folder(payload.get("folder", DEFAULT_PHONE_FOLDER))
+                name = payload["name"]
+                new_stem = payload["new_stem"]
+                if not isinstance(name, str) or not isinstance(new_stem, str):
+                    raise ValueError
+            except (ValueError, KeyError, TypeError):
+                raise web.HTTPBadRequest(text="Choose one video and a new name")
+            entry = await selected_entry(folder, name)
+            try:
+                result = await rename_one(controller.adb, entry, folder, new_stem)
+            except FileExistsError:
+                controller.tone.failure()
+                raise web.HTTPConflict(text="A video with the new name already exists")
+            except ValueError:
+                raise web.HTTPBadRequest(text="Invalid new video name")
+            except (UncertainMutation, MediaIndexError, AdbFailure):
+                controller.tone.failure()
+                raise web.HTTPConflict(text="Rename result uncertain; inspect the phone")
+            app[VERIFIED_CATALOG_KEY].pop(folder, None)
+            controller.tone.success()
+            return web.json_response(asdict(result))
+
+    async def post_delete(request):
+        require_local_origin_and_token(request)
+        if app[TRANSFER_JOB_KEY]["running"]:
+            raise web.HTTPConflict(text="A transfer is running")
+        async with app[FILE_LOCK_KEY]:
+            require_idle_for_mutation()
+            try:
+                payload = await request.json()
+                folder = validate_folder(payload.get("folder", DEFAULT_PHONE_FOLDER))
+                name = payload["name"]
+                confirmed_name = payload["confirmed_name"]
+                if not isinstance(name, str) or confirmed_name != name:
+                    raise ValueError
+            except (ValueError, KeyError, TypeError):
+                raise web.HTTPBadRequest(text="Confirm the exact selected video name")
+            entry = await selected_entry(folder, name)
+            try:
+                await delete_one(controller.adb, entry, folder, confirmed_name)
+            except (UncertainMutation, MediaIndexError, AdbFailure):
+                controller.tone.failure()
+                raise web.HTTPConflict(text="Deletion result uncertain; inspect the phone")
+            app[VERIFIED_CATALOG_KEY].pop(folder, None)
+            controller.tone.success()
+            return web.json_response({"deleted": name})
+
+    async def post_move(request):
+        require_local_origin_and_token(request)
+        if app[TRANSFER_JOB_KEY]["running"] or app[FILE_LOCK_KEY].locked():
+            raise web.HTTPConflict(text="A file operation is already running")
+        await app[FILE_LOCK_KEY].acquire()
+        try:
+            require_idle_for_mutation()
+            try:
+                payload = await request.json()
+                folder = validate_folder(payload.get("folder", DEFAULT_PHONE_FOLDER))
+                name = payload["name"]
+                destination = Path(payload["destination"]).expanduser()
+                if not isinstance(name, str) or not destination.is_absolute():
+                    raise ValueError
+            except (ValueError, KeyError, TypeError):
+                raise web.HTTPBadRequest(text="Choose one video and an absolute PC folder")
+            entry = await selected_entry(folder, name)
+        except Exception:
+            app[FILE_LOCK_KEY].release()
+            raise
+        job = app[TRANSFER_JOB_KEY]
+        job.clear()
+        job.update({"id": uuid4().hex, "total": 1, "stages": {name: "copying"},
+                    "results": [], "running": True, "completed": 0})
+
+        async def perform_move():
+            try:
+                result = await move_one(controller.adb, entry, folder, destination)
+                job["results"] = [asdict(result)]
+                job["stages"][name] = result.outcome
+                job["completed"] = 1
+                if result.outcome == "verified":
+                    app[VERIFIED_CATALOG_KEY].pop(folder, None)
+                    controller.tone.success()
+                else:
+                    controller.tone.failure()
+            except Exception:
+                job["stages"][name] = "uncertain"
+                job["results"] = [{"name": name, "outcome": "uncertain", "destination": None,
+                                   "message": "Move result uncertain; inspect phone and PC"}]
+                job["completed"] = 1
+                controller.tone.failure()
+            finally:
+                job["running"] = False
+                app[FILE_LOCK_KEY].release()
+
+        task = asyncio.create_task(perform_move())
+        app[TRANSFER_TASKS_KEY].add(task)
+        task.add_done_callback(app[TRANSFER_TASKS_KEY].discard)
+        return web.json_response({"accepted": True, "id": job["id"]}, status=202)
+
     async def post_camera(request):
         require_local_origin_and_token(request)
+        if app[FILE_LOCK_KEY].locked():
+            raise web.HTTPConflict(text="A phone file operation is in progress")
         try:
             payload = await request.json()
             action = CameraAction(payload["action"])
@@ -170,6 +300,8 @@ def create_app(controller, token: str) -> web.Application:
 
     async def post_verification(request):
         require_local_origin_and_token(request)
+        if app[FILE_LOCK_KEY].locked():
+            raise web.HTTPConflict(text="A phone file operation is in progress")
         try:
             payload = await request.json()
         except ValueError:
@@ -189,6 +321,9 @@ def create_app(controller, token: str) -> web.Application:
     app.router.add_get("/api/videos", videos)
     app.router.add_get("/api/transfers", transfers)
     app.router.add_post("/api/copy", post_copy)
+    app.router.add_post("/api/move", post_move)
+    app.router.add_post("/api/rename", post_rename)
+    app.router.add_post("/api/delete", post_delete)
     app.router.add_post("/api/camera", post_camera)
     app.router.add_post("/api/verification", post_verification)
     return app

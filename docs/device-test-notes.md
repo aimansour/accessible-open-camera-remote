@@ -56,3 +56,21 @@ and showed one verified result in a native list; focus stayed on the Copy
 button, and the browser reported no console errors. This does not yet prove
 NVDA announces transfer progress in the user's preferred way; the page does
 not use automatic announcements.
+
+## Media index rename and delete check
+
+With the user's approval, an opt-in test created a one-second black MP4 with a
+random `oc_remote_index_test_` name in `/sdcard/DCIM/OpenCamera`. Android's
+video MediaStore indexed it. The test renamed that file and confirmed the old
+name was absent and the new name was present in both the filesystem and
+MediaStore. It then deleted the same file and confirmed absence from both.
+Finally it cleaned up only the two random names it had created. The passing
+device gate took about 16 seconds.
+
+On this Android 16 build, `content update` returned empty stdout despite
+performing the rename. The implementation therefore uses the two independent
+postcondition checks instead of relying on a particular command message.
+The browser demonstration exposed the selected-video actions and an inline
+confirmation with the exact filename. Clicking Delete kept focus on that
+button, and the browser reported no console errors. It did not send a delete
+request to the phone; that server path is covered by automated API tests.

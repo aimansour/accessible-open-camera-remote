@@ -42,3 +42,13 @@ def test_copy_controls_are_labeled_and_progress_is_plain_text():
     assert '<button id="copy"' in html
     assert '<ul id="transferResults"' in html
     assert "aria-live" not in html
+
+
+def test_mutation_controls_use_inline_delete_confirmation():
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    script = (WEB / "app.js").read_text(encoding="utf-8")
+    for control in ('id="move"', 'id="rename"', 'id="delete"', 'id="confirmDelete"'):
+        assert control in html
+    assert '<label for="newStem"' in html
+    assert 'id="deleteConfirmation"' in html
+    assert "window.confirm" not in script and "window.alert" not in script

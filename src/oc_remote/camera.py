@@ -7,6 +7,8 @@ from enum import StrEnum
 from typing import Protocol
 
 from .adb import AdbFailure
+from .catalog import DEFAULT_PHONE_FOLDER, InvalidListing, VideoEntry
+from .recording_evidence import finalized_since, snapshot
 from .state import CaptureState, InvalidDump, classify, parse_dump
 
 
@@ -61,10 +63,14 @@ ALLOWED = {
 
 
 class CameraController:
-    def __init__(self, adb, tone: TonePort, diagnostics=None):
+    def __init__(self, adb, tone: TonePort, diagnostics=None,
+                 phone_folder: str = DEFAULT_PHONE_FOLDER):
         self.adb = adb
         self.tone = tone
         self._diagnostics = diagnostics
+        self._phone_folder = phone_folder
+        self._latest_baseline: dict[str, VideoEntry] | None = None
+        self._active_baseline: dict[str, VideoEntry] | None = None
         self._state = CaptureState.UNKNOWN
         self._confirmed_state = CaptureState.UNKNOWN
         self._verification_enabled = True
@@ -99,6 +105,14 @@ class CameraController:
         try:
             self._state = classify(parse_dump(await self.adb.dump_ui()))
             self._confirmed_state = self._state
+            try:
+                self._latest_baseline = await snapshot(self.adb, self._phone_folder)
+            except (AdbFailure, InvalidListing, ValueError, asyncio.TimeoutError):
+                self._latest_baseline = None
+            self._active_baseline = (
+                self._latest_baseline if self._state in (CaptureState.RECORDING, CaptureState.PAUSED)
+                else None
+            )
             self._message = (
                 "Open Camera is in photo mode or its recording state could not be recognized"
                 if self._state is CaptureState.UNKNOWN else "Camera state verified"
@@ -112,6 +126,8 @@ class CameraController:
         self._verification_enabled = False
         self._state = CaptureState.UNKNOWN
         self._confirmed_state = CaptureState.UNKNOWN
+        self._latest_baseline = None
+        self._active_baseline = None
         self._message = "Verification is off; phone camera controls are disabled"
         self._pending.clear()
         tasks = (self._sender_task, self._verifier_task)
@@ -132,6 +148,8 @@ class CameraController:
             raise CommandBusy("Too many camera commands are waiting")
         if not self._busy:
             self._settled = asyncio.Event()
+        if action is CameraAction.START:
+            self._active_baseline = self._latest_baseline
         self._generation += 1
         self._unresolved += 1
         self._state = EXPECTED[action]
@@ -155,6 +173,7 @@ class CameraController:
         self._pending.clear()
         self._state = CaptureState.UNKNOWN
         self._confirmed_state = CaptureState.UNKNOWN
+        self._active_baseline = None
         self._message = message
         self._busy = False
         self._unresolved = 0
@@ -224,6 +243,23 @@ class CameraController:
                     await asyncio.sleep(0.02)
                     continue
                 if observed is self._state:
+                    if observed is CaptureState.IDLE:
+                        try:
+                            finalized = await finalized_since(
+                                self.adb, self._phone_folder, self._active_baseline, 8,
+                            )
+                        except (AdbFailure, InvalidListing, ValueError, asyncio.TimeoutError):
+                            finalized = False
+                        if captured_generation != self._generation:
+                            continue
+                        if not finalized:
+                            self._fail("Recording ended, but a finalized video could not be confirmed")
+                            return
+                        try:
+                            self._latest_baseline = await snapshot(self.adb, self._phone_folder)
+                        except (AdbFailure, InvalidListing, ValueError, asyncio.TimeoutError):
+                            self._latest_baseline = None
+                        self._active_baseline = None
                     self._confirmed_state = observed
                     self._message = "Camera state verified"
                     self._busy = False

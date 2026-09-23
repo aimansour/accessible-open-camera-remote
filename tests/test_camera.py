@@ -24,6 +24,7 @@ PAUSED = xml("Stop recording video", "Resume video recording")
 class FakeAdb:
     def __init__(self, initial=IDLE, after=RECORDING):
         self.dumps = [initial, after]
+        self.initial = initial
         self.keys = []
         self.first_press = asyncio.Event()
         self.hold = asyncio.Event()
@@ -31,8 +32,13 @@ class FakeAdb:
         self.window = b"mCurrentFocus=Window{1 u0 net.sourceforge.opencamera/.MainActivity}\n"
         self.power = b"mWakefulness=Awake\n"
         self.dump_count = 0
+        self.finalize_on_stop = True
 
     async def run(self, *args, **kwargs):
+        if "find" in args:
+            if self.finalize_on_stop and len(self.keys) >= (1 if self.initial is PAUSED else 2):
+                return b"new.mp4\0" + b"20\0" + b"2.0\0"
+            return b""
         if args[-2:] == ("dumpsys", "window"):
             return self.window
         if args[-2:] == ("dumpsys", "power"):
@@ -248,4 +254,18 @@ async def test_repeated_wrong_state_has_a_bounded_uncertain_result():
     result = await asyncio.wait_for(controller.submit(CameraAction.START), 0.3)
     assert result.state is CaptureState.UNKNOWN
     assert adb.keys == [24]
+    assert tone.events == ["failure"]
+
+
+async def test_rapid_stop_with_idle_dump_but_no_finalized_video_is_uncertain():
+    adb, tone = FakeAdb(), FakeTone()
+    adb.dumps = [IDLE, IDLE]
+    adb.finalize_on_stop = False
+    controller = CameraController(adb, tone)
+    await controller.start_session()
+    start = controller.submit(CameraAction.START)
+    stop = controller.submit(CameraAction.STOP)
+    await asyncio.wait_for(asyncio.gather(start, stop), 9)
+    assert adb.keys == [24, 24]
+    assert controller.status().state is CaptureState.UNKNOWN
     assert tone.events == ["failure"]

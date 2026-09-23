@@ -200,3 +200,52 @@ async def test_failed_second_key_drops_queued_third_key():
     assert adb.keys == [24, 24]
     assert controller.status().state is CaptureState.UNKNOWN
     assert tone.events == ["failure"]
+
+
+async def test_failure_from_stale_dump_does_not_override_newer_stop_result():
+    first_result_started = asyncio.Event()
+    release_first_result = asyncio.Event()
+
+    class RaceAdb(FakeAdb):
+        async def dump_ui(self):
+            self.dump_count += 1
+            if self.dump_count == 1:
+                return IDLE
+            if self.dump_count == 2:
+                first_result_started.set()
+                await release_first_result.wait()
+                from oc_remote.adb import AdbFailure
+                raise AdbFailure("old dump failed")
+            return IDLE
+
+    adb, tone = RaceAdb(), FakeTone()
+    controller = CameraController(adb, tone)
+    await controller.start_session()
+    start = controller.submit(CameraAction.START)
+    await asyncio.wait_for(first_result_started.wait(), 1)
+    stop = controller.submit(CameraAction.STOP)
+    for _ in range(100):
+        if len(adb.keys) == 2:
+            break
+        await asyncio.sleep(0.001)
+    assert adb.keys == [24, 24]
+    release_first_result.set()
+    await asyncio.gather(start, stop)
+    assert controller.status().confirmed_state is CaptureState.IDLE
+    assert tone.events == ["success"]
+
+
+async def test_repeated_wrong_state_has_a_bounded_uncertain_result():
+    class WrongStateAdb(FakeAdb):
+        async def dump_ui(self):
+            self.dump_count += 1
+            await asyncio.sleep(0.01)
+            return IDLE
+
+    adb, tone = WrongStateAdb(), FakeTone()
+    controller = CameraController(adb, tone)
+    await controller.start_session()
+    result = await asyncio.wait_for(controller.submit(CameraAction.START), 0.3)
+    assert result.state is CaptureState.UNKNOWN
+    assert adb.keys == [24]
+    assert tone.events == ["failure"]

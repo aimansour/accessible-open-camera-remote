@@ -198,26 +198,47 @@ class CameraController:
 
     async def _verify_loop(self) -> None:
         try:
-            async with asyncio.timeout(8):
-                while self._busy and self._verification_enabled:
-                    captured_generation = self._generation
-                    observed = classify(parse_dump(await self.adb.dump_ui()))
-                    if captured_generation != self._generation or self._sender_task is not None:
-                        await asyncio.sleep(0.02)
+            loop = asyncio.get_running_loop()
+            active_generation = -1
+            deadline = 0.0
+            mismatches = 0
+            while self._busy and self._verification_enabled:
+                if active_generation != self._generation:
+                    active_generation = self._generation
+                    deadline = loop.time() + 8
+                    mismatches = 0
+                captured_generation = self._generation
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    self._fail("Camera result uncertain; check the phone, then verify again")
+                    return
+                try:
+                    async with asyncio.timeout(remaining):
+                        observed = classify(parse_dump(await self.adb.dump_ui()))
+                except (AdbFailure, InvalidDump, asyncio.TimeoutError):
+                    if captured_generation != self._generation:
                         continue
-                    if observed is self._state:
-                        self._confirmed_state = observed
-                        self._message = "Camera state verified"
-                        self._busy = False
-                        self._unresolved = 0
-                        self.tone.success()
-                        self._record("camera_verified")
-                        self._settled.set()
-                        return
-                    if observed is CaptureState.UNKNOWN:
-                        break
-            self._fail("Command sent, but the camera state could not be confirmed")
+                    self._fail("Camera result uncertain; check the phone, then verify again")
+                    return
+                if captured_generation != self._generation or self._sender_task is not None:
+                    await asyncio.sleep(0.02)
+                    continue
+                if observed is self._state:
+                    self._confirmed_state = observed
+                    self._message = "Camera state verified"
+                    self._busy = False
+                    self._unresolved = 0
+                    self.tone.success()
+                    self._record("camera_verified")
+                    self._settled.set()
+                    return
+                if observed is CaptureState.UNKNOWN:
+                    self._fail("Command sent, but the camera state could not be confirmed")
+                    return
+                mismatches += 1
+                if mismatches >= 3:
+                    self._fail("Camera result uncertain; check the phone, then verify again")
+                    return
+                await asyncio.sleep(0.05)
         except asyncio.CancelledError:
             raise
-        except (AdbFailure, InvalidDump, asyncio.TimeoutError):
-            self._fail("Camera result uncertain; check the phone, then verify again")

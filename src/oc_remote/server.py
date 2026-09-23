@@ -62,7 +62,7 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
 
     def require_idle_for_mutation():
         camera = controller.status()
-        if (camera.state is not CaptureState.IDLE or not camera.verification_enabled
+        if (camera.confirmed_state is not CaptureState.IDLE or not camera.verification_enabled
                 or camera.busy):
             raise web.HTTPConflict(text="Verify that recording has stopped before changing phone files")
 
@@ -107,7 +107,8 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
         except (InvalidListing, AdbFailure):
             raise web.HTTPBadGateway(text="Could not read the phone video folder")
         camera = controller.status()
-        if camera.state is CaptureState.IDLE and camera.verification_enabled:
+        if (camera.confirmed_state is CaptureState.IDLE and camera.verification_enabled
+                and not camera.busy):
             app[VERIFIED_CATALOG_KEY][folder] = {entry.name: entry for entry in entries}
         return web.json_response({"folder": folder, "videos": [asdict(entry) for entry in entries]})
 
@@ -133,7 +134,8 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
             except (ValueError, KeyError, TypeError):
                 raise web.HTTPBadRequest(text="Choose videos and an absolute PC folder")
             camera = controller.status()
-            if camera.state is CaptureState.IDLE and camera.verification_enabled:
+            if (camera.confirmed_state is CaptureState.IDLE and camera.verification_enabled
+                    and not camera.busy):
                 try:
                     latest = await list_videos(controller.adb, folder)
                 except (InvalidListing, AdbFailure):
@@ -315,7 +317,7 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
             raise web.HTTPConflict(text="Verify camera state before this command")
         app[CAMERA_TASKS_KEY].add(task)
         task.add_done_callback(app[CAMERA_TASKS_KEY].discard)
-        return web.json_response({"accepted": True}, status=202)
+        return web.json_response({"accepted": True, **asdict(controller.status())}, status=202)
 
     async def post_verification(request):
         require_local_origin_and_token(request)

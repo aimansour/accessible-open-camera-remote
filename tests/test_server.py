@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-from oc_remote.camera import CameraAction, CameraStatus, CommandBusy
+from oc_remote.camera import CameraAction, CameraController, CameraStatus, CommandBusy
 from oc_remote.server import FILE_LOCK_KEY, create_app
 from oc_remote.state import CaptureState
 
@@ -18,7 +18,7 @@ class FakeController:
         self.verification_enabled = True
 
     def status(self):
-        return CameraStatus(self.state, self.verification_enabled, self.busy, "Ready")
+        return CameraStatus(self.state, self.verification_enabled, self.busy, "Ready", self.state)
 
     def submit(self, action):
         if self.busy:
@@ -92,6 +92,64 @@ async def test_status_is_readable_without_token(client):
     response = await http.get("/api/status")
     assert response.status == 200
     assert (await response.json())["state"] == "idle"
+
+
+async def test_real_controller_accepts_stop_before_start_dump_completes():
+    held = asyncio.Event()
+    dump_started = asyncio.Event()
+
+    class Adb:
+        def __init__(self):
+            self.dumps = 0
+            self.keys = []
+
+        async def run(self, *args, **kwargs):
+            if "find" in args:
+                return b"new.mp4\x0020\x002.0\x00" if len(self.keys) == 2 else b""
+            if "window" in args:
+                return b"mCurrentFocus=net.sourceforge.opencamera/.MainActivity\n"
+            return b"mWakefulness=Awake\n"
+
+        async def dump_ui(self):
+            self.dumps += 1
+            if self.dumps == 1:
+                return (b'<hierarchy><node package="net.sourceforge.opencamera" '
+                        b'resource-id="net.sourceforge.opencamera:id/take_photo" '
+                        b'content-desc="Start recording video"/></hierarchy>')
+            if self.dumps == 2:
+                dump_started.set()
+                await held.wait()
+            return (b'<hierarchy><node package="net.sourceforge.opencamera" '
+                    b'resource-id="net.sourceforge.opencamera:id/take_photo" '
+                    b'content-desc="Start recording video"/></hierarchy>')
+
+        async def press(self, key):
+            self.keys.append(key)
+
+    class Tone:
+        def success(self):
+            pass
+
+        def failure(self):
+            pass
+
+    adb = Adb()
+    controller = CameraController(adb, Tone())
+    await controller.start_session()
+    async with TestClient(TestServer(create_app(controller, "valid"))) as http:
+        first = await http.post("/api/camera", json={"action": "start"}, headers=auth(http))
+        assert first.status == 202
+        await asyncio.wait_for(dump_started.wait(), 1)
+        second = await http.post("/api/camera", json={"action": "stop"}, headers=auth(http))
+        assert second.status == 202
+        payload = await second.json()
+        assert payload["state"] == "idle"
+        assert payload["confirmed_state"] == "idle"
+        assert payload["busy"] is True
+        assert payload["generation"] == 2
+        held.set()
+        await asyncio.sleep(0)
+    await controller.stop_verification()
 
 
 async def test_page_serves_session_token_and_web_assets(client):

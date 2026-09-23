@@ -38,7 +38,8 @@ const labels = {
       "Unlock the phone and bring Open Camera to the foreground": "افتح قفل الهاتف واجعل Open Camera في المقدمة.",
       "Command sent, but the camera state could not be confirmed": "أُرسل الأمر لكن لم يمكن تأكيد حالة الكاميرا.",
       "Verification stopped": "توقف الفحص",
-      "Camera result uncertain; check the phone, then verify again": "نتيجة الأمر غير مؤكدة؛ تحقق من الهاتف ثم شغّل الفحص من جديد."
+      "Camera result uncertain; check the phone, then verify again": "نتيجة الأمر غير مؤكدة؛ تحقق من الهاتف ثم شغّل الفحص من جديد.",
+      "Recording ended, but a finalized video could not be confirmed": "انتهى التصوير لكن تعذر تأكيد اكتمال ملف الفيديو. افحص الهاتف."
     }
   },
   en: {
@@ -78,7 +79,8 @@ const labels = {
       "Unlock the phone and bring Open Camera to the foreground": "Unlock the phone and bring Open Camera to the foreground",
       "Command sent, but the camera state could not be confirmed": "Command sent, but the camera state could not be confirmed",
       "Verification stopped": "Verification stopped",
-      "Camera result uncertain; check the phone, then verify again": "Camera result uncertain; check the phone, then verify again"
+      "Camera result uncertain; check the phone, then verify again": "Camera result uncertain; check the phone, then verify again",
+      "Recording ended, but a finalized video could not be confirmed": "Recording ended, but a finalized video could not be confirmed"
     }
   }
 };
@@ -94,7 +96,10 @@ const confirmDeleteButton = document.getElementById("confirmDelete");
 const languageSelect = document.getElementById("language");
 const token = document.querySelector('meta[name="session-token"]').content;
 let language = "ar";
-let current = { state: "unknown", verification_enabled: true, busy: false, message: "" };
+let current = { state: "unknown", confirmed_state: "unknown", verification_enabled: true, busy: false, generation: 0, message: "" };
+let pendingCamera = 0;
+let cameraRequests = Promise.resolve();
+let commandEpoch = 0;
 let currentVideos = null;
 let transferJob = null;
 let lastTransferJson = null;
@@ -107,8 +112,8 @@ function renderCamera(status) {
   const secondary = status.state === "paused" ? "resume" : "pause";
   cameraButton.textContent = words[primary];
   pauseButton.textContent = words[secondary];
-  cameraButton.setAttribute("aria-disabled", String(status.busy || !status.verification_enabled || status.state === "unknown"));
-  pauseButton.setAttribute("aria-disabled", String(status.busy || !status.verification_enabled || status.state === "idle" || status.state === "unknown"));
+  cameraButton.setAttribute("aria-disabled", String(pendingCamera >= 8 || !status.verification_enabled || status.state === "unknown"));
+  pauseButton.setAttribute("aria-disabled", String(pendingCamera >= 8 || !status.verification_enabled || status.state === "idle" || status.state === "unknown"));
   verificationButton.textContent = words[status.verification_enabled ? "verificationOn" : "verificationOff"];
   document.getElementById("stateText").textContent = words[status.state] || words.unknown;
   document.getElementById("messageText").textContent = status.message === "__disconnected__" ? words.disconnected
@@ -166,7 +171,7 @@ function updateCopyAvailability() {
 }
 
 function updateMutationAvailability() {
-  const allowed = current.state === "idle" && current.verification_enabled && !current.busy && !fileBusy
+  const allowed = current.confirmed_state === "idle" && current.verification_enabled && !current.busy && !fileBusy
     && !(transferJob && transferJob.running) && selectedNames().length === 1;
   for (const button of [moveButton, renameButton, deleteButton]) {
     button.setAttribute("aria-disabled", String(!allowed));
@@ -269,28 +274,50 @@ async function refreshVideos() {
   }
 }
 
-async function refresh() {
-  try {
-    const response = await fetch("/api/status", { cache: "no-store" });
-    if (!response.ok) throw new Error("status request failed");
-    current = await response.json();
-  } catch (_) {
-    current = { state: "unknown", verification_enabled: false, busy: false, message: "__disconnected__" };
-  }
+function acceptCameraStatus(status, force = false) {
+  if (!force && (pendingCamera > 0 || (status.generation ?? 0) < (current.generation ?? 0))) return;
+  current = status;
   renderCamera(current);
 }
 
-async function command(action) {
+async function refresh(force = false) {
   try {
+    const response = await fetch("/api/status", { cache: "no-store" });
+    if (!response.ok) throw new Error("status request failed");
+    acceptCameraStatus(await response.json(), force);
+  } catch (_) {
+    if (force || pendingCamera === 0) {
+      current = { state: "unknown", confirmed_state: "unknown", verification_enabled: false,
+        busy: false, generation: current.generation, message: "__disconnected__" };
+      renderCamera(current);
+    }
+  }
+}
+
+function command(action) {
+  const nextState = { start: "recording", stop: "idle", pause: "paused", resume: "recording" }[action];
+  pendingCamera++;
+  current = { ...current, state: nextState, busy: true, generation: (current.generation ?? 0) + 1,
+    message: "Sending command and checking its result" };
+  renderCamera(current);
+  const epoch = commandEpoch;
+  cameraRequests = cameraRequests.then(async () => {
+    if (epoch !== commandEpoch) return;
     const response = await fetch("/api/camera", {
       method: "POST", headers: { "Content-Type": "application/json", "X-Session-Token": token },
       body: JSON.stringify({ action })
     });
     if (!response.ok) throw new Error(await response.text());
-    await refresh();
-  } catch (error) {
+    const status = await response.json();
+    pendingCamera--;
+    acceptCameraStatus(status);
+  }).catch(async error => {
+    if (epoch !== commandEpoch) return;
+    commandEpoch++;
+    pendingCamera = 0;
+    await refresh(true);
     document.getElementById("messageText").textContent = error.message;
-  }
+  });
 }
 
 cameraButton.addEventListener("click", () => {

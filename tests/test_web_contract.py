@@ -19,8 +19,9 @@ def test_page_has_native_browse_mode_controls_without_auto_announcements():
 
 def test_both_languages_have_matching_camera_action_keys():
     script = (WEB / "app.js").read_text(encoding="utf-8")
+    label_definitions = script.split("const cameraButton", 1)[0]
     for key in ("start", "stop", "pause", "resume", "unknown", "verificationOn", "verificationOff"):
-        assert script.count(f"{key}:") == 2
+        assert label_definitions.count(f"{key}:") == 2
     for message in ("Camera state verified", "Unlock the phone and bring Open Camera to the foreground",
                     "Camera result uncertain; check the phone, then verify again"):
         assert script.count(f'"{message}":') == 2
@@ -52,3 +53,9 @@ def test_mutation_controls_use_inline_delete_confirmation():
     assert '<label for="newStem"' in html
     assert 'id="deleteConfirmation"' in html
     assert "window.confirm" not in script and "window.alert" not in script
+
+
+def test_camera_buttons_are_not_disabled_just_for_pending_verification():
+    script = (WEB / "app.js").read_text(encoding="utf-8")
+    assert 'String(status.busy ||' not in script
+    assert 'confirmed_state' in script

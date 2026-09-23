@@ -32,7 +32,9 @@ def choose_device(adb_path: Path, requested: str | None) -> str:
     return connected[0]
 
 
-async def _stop_tasks(app) -> None:
+async def _stop_tasks(app, controller=None) -> None:
+    if controller is not None:
+        await controller.stop_verification()
     tasks = tuple(app[CAMERA_TASKS_KEY] | app[TRANSFER_TASKS_KEY])
     for task in tasks:
         task.cancel()
@@ -64,7 +66,7 @@ async def serve(serial: str, adb_path: Path) -> None:
     try:
         await asyncio.Event().wait()
     finally:
-        await _stop_tasks(app)
+        await _stop_tasks(app, controller)
         await runner.cleanup()
         diagnostics.record("service_stopped")
 

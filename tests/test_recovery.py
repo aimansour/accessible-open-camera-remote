@@ -162,3 +162,24 @@ async def test_service_shutdown_waits_for_camera_and_transfer_jobs():
     await asyncio.sleep(0)
     await _stop_tasks({CAMERA_TASKS_KEY: {camera}, TRANSFER_TASKS_KEY: {transfer}})
     assert set(stopped) == {"camera", "transfer"}
+
+
+async def test_shutdown_cancels_camera_key_sender_before_it_finishes():
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    class HeldAdb(CameraAdb):
+        async def press(self, key):
+            entered.set()
+            await release.wait()
+            self.keys.append(key)
+
+    adb, tone = HeldAdb(), Tone()
+    controller = CameraController(adb, tone)
+    await controller.start_session()
+    completion = controller.submit(CameraAction.START)
+    await entered.wait()
+    await _stop_tasks({CAMERA_TASKS_KEY: {completion}, TRANSFER_TASKS_KEY: set()}, controller)
+    release.set()
+    await asyncio.sleep(0)
+    assert adb.keys == []
+    assert controller.status().state is CaptureState.UNKNOWN

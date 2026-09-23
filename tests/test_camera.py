@@ -77,14 +77,14 @@ async def test_command_is_sent_before_verification_finishes():
     assert tone.events == ["success"]
 
 
-async def test_second_click_during_verification_does_not_toggle_twice():
+async def test_duplicate_start_during_verification_does_not_send_a_second_key():
     adb, tone = FakeAdb(), FakeTone()
     controller = CameraController(adb, tone)
     await controller.start_session()
     adb.hold.clear()
     task = controller.submit(CameraAction.START)
     await asyncio.wait_for(adb.first_press.wait(), 1)
-    with pytest.raises(CommandBusy):
+    with pytest.raises(CommandUnavailable):
         controller.submit(CameraAction.START)
     assert adb.keys == [24]
     adb.hold.set()
@@ -153,4 +153,50 @@ async def test_dump_timeout_after_press_is_uncertain_without_retry():
     result = await controller.submit(CameraAction.START)
     assert result.state is CaptureState.UNKNOWN
     assert adb.keys == [24]
+    assert tone.events == ["failure"]
+
+
+async def test_stop_key_is_sent_while_start_result_dump_is_still_waiting():
+    adb, tone = FakeAdb(), FakeTone()
+    adb.dumps.append(IDLE)
+    controller = CameraController(adb, tone)
+    assert (await controller.start_session()).confirmed_state is CaptureState.IDLE
+    adb.hold.clear()
+    start = controller.submit(CameraAction.START)
+    await asyncio.wait_for(adb.first_press.wait(), 1)
+    for _ in range(100):
+        if adb.dump_count >= 2:
+            break
+        await asyncio.sleep(0.001)
+    assert adb.dump_count >= 2
+    stop = controller.submit(CameraAction.STOP)
+    assert controller.status().state is CaptureState.IDLE
+    for _ in range(100):
+        if len(adb.keys) == 2:
+            break
+        await asyncio.sleep(0.001)
+    assert adb.keys == [24, 24]
+    assert tone.events == []
+    adb.hold.set()
+    await asyncio.gather(start, stop)
+
+
+async def test_failed_second_key_drops_queued_third_key():
+    adb, tone = FakeAdb(), FakeTone()
+    controller = CameraController(adb, tone)
+    await controller.start_session()
+
+    async def press(key):
+        adb.keys.append(key)
+        if len(adb.keys) == 2:
+            from oc_remote.adb import AdbFailure
+            raise AdbFailure("offline")
+
+    adb.press = press
+    tasks = [controller.submit(action) for action in (
+        CameraAction.START, CameraAction.STOP, CameraAction.START,
+    )]
+    await asyncio.gather(*tasks, return_exceptions=True)
+    assert adb.keys == [24, 24]
+    assert controller.status().state is CaptureState.UNKNOWN
     assert tone.events == ["failure"]

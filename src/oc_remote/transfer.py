@@ -113,10 +113,15 @@ async def copy_one(adb, entry: VideoEntry, phone_folder: str, pc_folder: Path,
 
 async def copy_many(adb, entries: list[VideoEntry], phone_folder: str, pc_folder: Path,
                     progress=None, on_result=None) -> list[TransferResult]:
-    results = []
-    for entry in entries:
-        result = await copy_one(adb, entry, phone_folder, pc_folder, progress=progress)
-        results.append(result)
-        if on_result is not None:
-            on_result(result)
-    return results
+    results: list[TransferResult | None] = [None] * len(entries)
+    remaining = iter(enumerate(entries))
+
+    async def worker():
+        for index, entry in remaining:
+            result = await copy_one(adb, entry, phone_folder, pc_folder, progress=progress)
+            results[index] = result
+            if on_result is not None:
+                on_result(result)
+
+    await asyncio.gather(*(worker() for _ in range(min(2, len(entries)))))
+    return [result for result in results if result is not None]

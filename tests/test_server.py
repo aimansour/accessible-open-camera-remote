@@ -597,6 +597,59 @@ async def test_batch_move_tracks_each_selected_file_and_one_tone(client, monkeyp
     assert controller.tone.events == ["success"]
 
 
+async def test_batch_move_uses_four_workers_and_updates_each_result(client, monkeypatch, tmp_path):
+    http, controller = client
+    names = [f"{letter}.mp4" for letter in "abcde"]
+    started = {name: asyncio.Event() for name in names}
+    release = {name: asyncio.Event() for name in names}
+
+    class Adb:
+        async def run(self, *args, **kwargs):
+            return b"".join(f"{name}\x004\x001.0\x00".encode() for name in names)
+
+    class Tone:
+        def __init__(self):
+            self.events = []
+
+        def success(self):
+            self.events.append("success")
+
+        def failure(self):
+            self.events.append("failure")
+
+    async def held_move(adb, entry, folder, destination):
+        from oc_remote.transfer import TransferResult
+        started[entry.name].set()
+        await release[entry.name].wait()
+        return TransferResult(entry.name, "verified", str(destination / entry.name), "verified")
+
+    monkeypatch.setattr("oc_remote.server.move_one", held_move)
+    controller.adb, controller.tone = Adb(), Tone()
+    response = await http.post("/api/move", json={"names": names, "destination": str(tmp_path)},
+                               headers=auth(http))
+    assert response.status == 202
+    try:
+        await asyncio.wait_for(asyncio.gather(*(started[name].wait() for name in names[:4])), 1)
+        assert not started[names[4]].is_set()
+        release[names[0]].set()
+        await asyncio.wait_for(started[names[4]].wait(), 1)
+        job = await (await http.get("/api/transfers")).json()
+        assert job["kind"] == "move"
+        assert job["running"] is True and job["completed"] == 1
+        assert [item["name"] for item in job["results"]] == [names[0]]
+        assert controller.tone.events == []
+    finally:
+        for event in release.values():
+            event.set()
+    for _ in range(100):
+        job = await (await http.get("/api/transfers")).json()
+        if not job["running"]:
+            break
+        await asyncio.sleep(0.001)
+    assert job["completed"] == 5 and job["running"] is False
+    assert controller.tone.events == ["success"]
+
+
 async def test_delete_returns_progress_before_completion_and_conflicts_with_second_delete(client, monkeypatch):
     http, controller = client
     deleting, release = asyncio.Event(), asyncio.Event()

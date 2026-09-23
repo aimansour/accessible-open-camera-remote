@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 from pathlib import Path
 
@@ -118,3 +119,31 @@ async def test_batch_continues_after_one_bad_hash(fake_adb, tmp_path):
     assert (tmp_path / "a.mp4").exists()
     assert not (tmp_path / "b.mp4").exists()
     assert (tmp_path / "c.mp4").exists()
+
+
+async def test_copy_batch_uses_two_workers_and_keeps_result_order(monkeypatch, tmp_path):
+    started = {name: asyncio.Event() for name in ("a.mp4", "b.mp4", "c.mp4", "d.mp4")}
+    release = {name: asyncio.Event() for name in started}
+
+    async def held_copy(adb, entry, phone_folder, pc_folder, progress=None):
+        from oc_remote.transfer import TransferResult
+        started[entry.name].set()
+        await release[entry.name].wait()
+        return TransferResult(entry.name, "verified", str(pc_folder / entry.name), "verified")
+
+    monkeypatch.setattr("oc_remote.transfer.copy_one", held_copy)
+    entries = [VideoEntry(name, 4, 1.0) for name in started]
+    task = asyncio.create_task(copy_many(object(), entries, PHONE, tmp_path))
+    try:
+        await asyncio.wait_for(asyncio.gather(started["a.mp4"].wait(), started["b.mp4"].wait()), 1)
+        assert not started["c.mp4"].is_set() and not started["d.mp4"].is_set()
+        release["a.mp4"].set()
+        await asyncio.wait_for(started["c.mp4"].wait(), 1)
+        assert not started["d.mp4"].is_set()
+        release["b.mp4"].set()
+        await asyncio.wait_for(started["d.mp4"].wait(), 1)
+    finally:
+        for event in release.values():
+            event.set()
+    results = await asyncio.wait_for(task, 1)
+    assert [result.name for result in results] == ["a.mp4", "b.mp4", "c.mp4", "d.mp4"]

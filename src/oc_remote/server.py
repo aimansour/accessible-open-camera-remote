@@ -351,24 +351,29 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
             raise
         job = app[TRANSFER_JOB_KEY]
         job.clear()
-        job.update({"id": uuid4().hex, "total": len(entries),
+        job.update({"id": uuid4().hex, "kind": "move", "total": len(entries),
                     "stages": {entry.name: "waiting" for entry in entries},
                     "results": [], "running": True, "completed": 0})
 
         async def perform_move():
             try:
-                for entry in entries:
-                    name = entry.name
-                    job["stages"][name] = "copying"
-                    try:
-                        result = await move_one(controller.adb, entry, folder, destination)
-                        job["results"].append(asdict(result))
-                        job["stages"][name] = result.outcome
-                    except Exception:
-                        job["stages"][name] = "uncertain"
-                        job["results"].append({"name": name, "outcome": "uncertain", "destination": None,
-                                               "message": "Move result uncertain; inspect phone and PC"})
-                    job["completed"] += 1
+                remaining = iter(entries)
+
+                async def move_worker():
+                    for entry in remaining:
+                        name = entry.name
+                        job["stages"][name] = "copying"
+                        try:
+                            result = await move_one(controller.adb, entry, folder, destination)
+                            job["results"].append(asdict(result))
+                            job["stages"][name] = result.outcome
+                        except Exception:
+                            job["stages"][name] = "uncertain"
+                            job["results"].append({"name": name, "outcome": "uncertain", "destination": None,
+                                                   "message": "Move result uncertain; inspect phone and PC"})
+                        job["completed"] += 1
+
+                await asyncio.gather(*(move_worker() for _ in range(min(4, len(entries)))))
                 verified = all(result["outcome"] == "verified" for result in job["results"])
                 if any(result["outcome"] == "verified" for result in job["results"]):
                     app[VERIFIED_CATALOG_KEY].pop(folder, None)

@@ -442,6 +442,66 @@ async def test_batch_delete_reports_each_result_and_one_final_tone(client, monke
     assert controller.tone.events == ["failure"]
 
 
+async def test_batch_delete_runs_two_files_concurrently_and_reports_each_completion(client, monkeypatch):
+    http, controller = client
+    first_started = asyncio.Event()
+    second_started = asyncio.Event()
+    release_first = asyncio.Event()
+    release_second = asyncio.Event()
+    third_started = asyncio.Event()
+
+    class Adb:
+        async def run(self, *args, **kwargs):
+            return b"first.mp4\x004\x001.0\x00second.mp4\x004\x001.0\x00third.mp4\x004\x001.0\x00"
+
+    class Tone:
+        def __init__(self):
+            self.events = []
+
+        def success(self):
+            self.events.append("success")
+
+        def failure(self):
+            self.events.append("failure")
+
+    async def held_delete(adb, entry, folder, name, progress=None):
+        progress("deleting")
+        if name == "first.mp4":
+            first_started.set()
+            await release_first.wait()
+        elif name == "second.mp4":
+            second_started.set()
+            await release_second.wait()
+        else:
+            third_started.set()
+        progress("verified")
+
+    monkeypatch.setattr("oc_remote.server.delete_one", held_delete)
+    controller.adb, controller.tone = Adb(), Tone()
+    names = ["first.mp4", "second.mp4", "third.mp4"]
+    response = await http.post("/api/delete", json={"names": names, "confirmed_names": names}, headers=auth(http))
+    assert response.status == 202
+    try:
+        await asyncio.wait_for(asyncio.gather(first_started.wait(), second_started.wait()), 1)
+        assert not third_started.is_set()
+        release_first.set()
+        await asyncio.wait_for(third_started.wait(), 1)
+        job = await (await http.get("/api/file-operation")).json()
+        assert job["completed"] == 2
+        assert job["stages"] == {"first.mp4": "verified", "second.mp4": "deleting", "third.mp4": "verified"}
+        assert job["running"] is True
+    finally:
+        release_first.set()
+        release_second.set()
+    for _ in range(100):
+        job = await (await http.get("/api/file-operation")).json()
+        if not job["running"]:
+            break
+        await asyncio.sleep(0.001)
+    assert job["completed"] == 3 and job["outcome"] == "verified"
+    assert controller.tone.events == ["success"]
+
+
 async def test_batch_move_tracks_each_selected_file_and_one_tone(client, monkeypatch, tmp_path):
     http, controller = client
 

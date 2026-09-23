@@ -18,7 +18,10 @@ const labels = {
     manageHeading: "إدارة الفيديوهات المحددة", manageHint: "حدد فيديوهات مكتملة بعد إنهاء التسجيل والتحقق من حالته.",
     move: "نقل المحدد إلى الكمبيوتر", newStemLabel: "الاسم الجديد من دون الامتداد", rename: "إعادة التسمية",
     delete: "حذف المحدد", confirmDelete: "تأكيد الحذف", cancelDelete: "إلغاء الحذف",
-    deletingChecking: "جارٍ الحذف والتحقق", deleteStages: {
+    deletingChecking: "جارٍ الحذف والتحقق", deleteProgressLabel: "تقدم حذف الملفات",
+    deleteProgressText: (percent, completed, total, verified, uncertain) =>
+      `${percent}٪ — اكتمل فحص ${completed} من ${total}. تأكد حذف ${verified}، ونتيجة ${uncertain} غير مؤكدة.`,
+    deleteStages: {
       checking: "جارٍ فحص الفيديو المحدد", deleting: "جارٍ حذفه من الهاتف",
       verifying: "جارٍ فحص الملف وفهرس Android", verified: "اكتمل الحذف والتحقق",
       uncertain: "نتيجة الحذف غير مؤكدة؛ افحص الهاتف"
@@ -65,7 +68,10 @@ const labels = {
     manageHeading: "Manage selected videos", manageHint: "Select completed videos after recording has stopped and its state is verified.",
     move: "Move selected to PC", newStemLabel: "New name without extension", rename: "Rename",
     delete: "Delete selected", confirmDelete: "Confirm deletion", cancelDelete: "Cancel deletion",
-    deletingChecking: "Deleting and checking", deleteStages: {
+    deletingChecking: "Deleting and checking", deleteProgressLabel: "File deletion progress",
+    deleteProgressText: (percent, completed, total, verified, uncertain) =>
+      `${percent}% — ${completed} of ${total} checked. ${verified} verified deleted; ${uncertain} uncertain.`,
+    deleteStages: {
       checking: "Checking the selected video", deleting: "Deleting from the phone",
       verifying: "Checking the file and Android media index", verified: "Deletion verified",
       uncertain: "Deletion result uncertain; inspect the phone"
@@ -121,6 +127,10 @@ let lastFileOperationJson = null;
 let lastTransferJson = null;
 let pendingDeleteNames = null;
 let fileBusy = false;
+let activeDeleteJobId = null;
+let seenVerifiedDeleteNames = new Set();
+let videoRevision = 0;
+let fileOperationRefreshInFlight = false;
 
 function renderCamera(status) {
   const words = labels[language];
@@ -147,6 +157,7 @@ function render() {
     document.getElementById(id).textContent = words[id];
   }
   document.getElementById("languageLabel").textContent = words.language;
+  document.getElementById("deleteProgressLabel").textContent = words.deleteProgressLabel;
   renderCamera(current);
   if (currentVideos !== null) renderVideos(currentVideos);
   if (transferJob !== null) renderTransfers(transferJob);
@@ -245,6 +256,8 @@ async function runMutation(action) {
       await refreshVideos();
     } else if (action === "delete") {
       const accepted = await mutationRequest("/api/delete", { folder, names, confirmed_names: pendingDeleteNames });
+      activeDeleteJobId = accepted.id;
+      seenVerifiedDeleteNames = new Set();
       fileOperation = { id: accepted.id, kind: "delete", stage: "checking", running: true,
         outcome: null, total: names.length, completed: 0, stages: Object.fromEntries(names.map(name => [name, "waiting"])) };
       renderFileOperation(fileOperation);
@@ -265,17 +278,56 @@ async function runMutation(action) {
 function renderFileOperation(job) {
   if (!job.id || job.kind !== "delete") return;
   const words = labels[language];
+  if (job.running && activeDeleteJobId === null) {
+    activeDeleteJobId = job.id;
+    seenVerifiedDeleteNames = new Set();
+  }
+  const stages = Object.entries(job.stages || {});
+  const verifiedNames = stages.filter(([, stage]) => stage === "verified").map(([name]) => name);
+  const uncertainCount = stages.filter(([, stage]) => stage === "uncertain").length;
+  const percent = job.total ? Math.floor(100 * job.completed / job.total) : 0;
+  const progressBox = document.getElementById("deleteProgressBox");
+  progressBox.hidden = false;
+  document.getElementById("deleteProgress").value = percent;
+  document.getElementById("deleteProgressText").textContent =
+    words.deleteProgressText(percent, job.completed, job.total, verifiedNames.length, uncertainCount);
   document.getElementById("manageResult").textContent =
     `${words.deleteStages[job.stage] || words.deletingChecking}: ${job.completed}/${job.total}`;
   const results = document.getElementById("deleteResults");
-  results.replaceChildren();
-  for (const [name, stage] of Object.entries(job.stages || {})) {
-    const item = document.createElement("li");
-    item.textContent = `${name} — ${words.deleteStages[stage] || stage}`;
-    results.append(item);
+  const existing = new Map([...results.children].map(item => [item.dataset.name, item]));
+  for (const [name, stage] of stages) {
+    let item = existing.get(name);
+    if (!item) {
+      item = document.createElement("li");
+      item.dataset.name = name;
+      results.append(item);
+    }
+    const description = `${name} — ${words.deleteStages[stage] || stage}`;
+    if (item.textContent !== description) item.textContent = description;
+    existing.delete(name);
+  }
+  for (const item of existing.values()) item.remove();
+  if (job.id === activeDeleteJobId) {
+    const deleted = new Set(verifiedNames);
+    const newlyVerified = verifiedNames.filter(name => !seenVerifiedDeleteNames.has(name));
+    if (newlyVerified.length) {
+      for (const name of newlyVerified) seenVerifiedDeleteNames.add(name);
+      videoRevision++;
+    }
+    if (currentVideos !== null) {
+      currentVideos = currentVideos.filter(entry => !deleted.has(entry.name));
+    }
+    const list = document.getElementById("videos");
+    for (const box of list.querySelectorAll('input[type="checkbox"]')) {
+      if (deleted.has(box.value)) box.closest("li").remove();
+    }
+    document.getElementById("videosMessage").textContent = list.children.length ? "" : words.noVideos;
+    updateSelectAll();
   }
   if (!job.running && job.id !== handledFileJobId) {
     handledFileJobId = job.id;
+    activeDeleteJobId = null;
+    seenVerifiedDeleteNames = new Set();
     pendingDeleteNames = null;
     document.getElementById("confirmationBox").hidden = true;
     refreshVideos();
@@ -284,7 +336,8 @@ function renderFileOperation(job) {
 }
 
 async function refreshFileOperation(force = false) {
-  if (fileBusy && !force) return;
+  if ((fileBusy && !force) || fileOperationRefreshInFlight) return;
+  fileOperationRefreshInFlight = true;
   try {
     const response = await fetch("/api/file-operation", { cache: "no-store" });
     if (!response.ok) throw new Error("file operation request failed");
@@ -299,6 +352,8 @@ async function refreshFileOperation(force = false) {
     if (fileOperation && fileOperation.running) {
       document.getElementById("manageResult").textContent = labels[language].operationFailed;
     }
+  } finally {
+    fileOperationRefreshInFlight = false;
   }
 }
 
@@ -337,10 +392,12 @@ async function refreshTransfers() {
 
 async function refreshVideos() {
   const folder = document.getElementById("phoneFolder").value;
+  const revision = videoRevision;
   try {
     const response = await fetch(`/api/videos?folder=${encodeURIComponent(folder)}`, { cache: "no-store" });
     if (!response.ok) throw new Error("videos request failed");
     const payload = await response.json();
+    if (revision !== videoRevision || folder !== document.getElementById("phoneFolder").value) return;
     currentVideos = payload.videos;
     renderVideos(currentVideos);
   } catch (_) {
@@ -491,4 +548,5 @@ refreshTransfers();
 refreshFileOperation();
 setInterval(refresh, 1000);
 setInterval(refreshTransfers, 1000);
-setInterval(refreshFileOperation, 1000);
+setInterval(() => { if (fileOperation?.running) refreshFileOperation(); }, 250);
+setInterval(() => { if (!fileOperation?.running) refreshFileOperation(); }, 1000);

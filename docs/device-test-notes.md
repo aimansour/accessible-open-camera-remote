@@ -133,3 +133,21 @@ completed with one success tone per job; the test cleaned up only its own names.
 The gated test passed in 31.94 seconds.
 The rebuilt Windows executable also opened a loopback page showing 38 videos,
 with no file-action buttons exposed before selection and no browser errors.
+
+## Verified deletion progress follow-up
+
+On 2026-09-24, a direct probe on the same phone deleted two disposable MP4s
+in 8.300 seconds sequentially and 4.134 seconds with two concurrent workers.
+Both paths checked phone-file and MediaStore absence. The bounded two-worker
+implementation then passed the opt-in API gate using five newly created,
+randomly named test videos: three were deleted and two moved. All phone-file
+and MediaStore postconditions passed, with one result tone per batch. The test
+cleaned only its own names; it did not touch personal recordings.
+
+Browser probes with synthetic entries verified that a confirmed-deleted video
+disappears while another remains pending, progress reads 50% for one of two
+completed, and an uncertain result remains in the video list at 100% checked.
+A delayed stale listing was also ignored after a verified deletion. Browser
+errors were empty. The percentage counts files whose deletion check finished;
+it does not estimate bytes or the time remaining. The user has not yet heard
+this updated progress page with NVDA.

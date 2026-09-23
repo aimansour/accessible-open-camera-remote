@@ -1,7 +1,7 @@
 # Accessible Open Camera Remote
 
 [Public repository](https://github.com/aimansour/accessible-open-camera-remote)
-· [Download Windows v0.1.1](https://github.com/aimansour/accessible-open-camera-remote/releases/tag/v0.1.1)
+· [Download Windows v0.1.2](https://github.com/aimansour/accessible-open-camera-remote/releases/tag/v0.1.2)
 
 A local Windows browser control for [Open Camera](https://opencamera.org.uk/) on
 Android. It is designed for ordinary NVDA browse mode: native buttons and
@@ -18,6 +18,8 @@ Android Debug Bridge (ADB); it does not install a phone app or change TalkBack.
   with a positive size stable across two reads before reporting success.
 - List phone videos, select one or all, copy with size and SHA-256 checks, move
   after a verified copy, and delete selected videos with a result for each.
+  Deletion uses two concurrent file workers. The page shows the percentage of
+  files checked and removes each video after its deletion is verified.
   Rename appears for one selected video. Unavailable actions are hidden.
 - Run recording controls while a copy of an older selected video is in
   progress. File mutations require a confirmed idle camera state.
@@ -59,7 +61,7 @@ The device workflow was exercised on Windows 10 Pro, Samsung SM-A155F,
 Android 16, Open Camera 1.56.2, and ADB 37.0.1. Browser focus and button names
 were checked in Arabic and English. The user reported that NVDA interaction
 and USB-C microphone sound worked in their session. Batch delete and move
-were tested on four disposable files created by the device test. Other
+were tested on five disposable files created by the latest device test. Other
 phones, Open Camera versions, and nondefault recording folders are unverified.
 Recording finalization currently checks `/sdcard/DCIM/OpenCamera`.
 

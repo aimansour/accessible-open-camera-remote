@@ -74,6 +74,11 @@
         <button id="cancelDelete" type="button">إلغاء الحذف</button>
       </div>
       <p id="manageResult"></p>
+      <div id="deleteProgressBox" hidden>
+        <label for="deleteProgress" id="deleteProgressLabel">تقدم حذف الملفات</label>
+        <progress id="deleteProgress" value="0" max="100">0%</progress>
+        <p id="deleteProgressText"></p>
+      </div>
       <ul id="deleteResults"></ul>
     </section>
   </main>

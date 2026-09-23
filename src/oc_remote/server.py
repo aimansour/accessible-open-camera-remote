@@ -286,16 +286,21 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
 
         async def perform_delete():
             try:
-                for entry in entries:
-                    name = entry.name
-                    try:
-                        await delete_one(controller.adb, entry, folder, name,
-                                         progress=lambda stage, name=name: progress(name, stage))
-                        job["results"].append({"name": name, "outcome": "verified"})
-                    except Exception:
-                        progress(name, "uncertain")
-                        job["results"].append({"name": name, "outcome": "uncertain"})
-                    job["completed"] += 1
+                remaining = iter(entries)
+
+                async def delete_worker():
+                    for entry in remaining:
+                        name = entry.name
+                        try:
+                            await delete_one(controller.adb, entry, folder, name,
+                                             progress=lambda stage, name=name: progress(name, stage))
+                            job["results"].append({"name": name, "outcome": "verified"})
+                        except Exception:
+                            progress(name, "uncertain")
+                            job["results"].append({"name": name, "outcome": "uncertain"})
+                        job["completed"] += 1
+
+                await asyncio.gather(*(delete_worker() for _ in range(min(2, len(entries)))))
                 verified = all(result["outcome"] == "verified" for result in job["results"])
                 job["outcome"] = "verified" if verified else "uncertain"
                 job["stage"] = job["outcome"]

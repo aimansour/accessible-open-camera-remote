@@ -47,7 +47,7 @@ async def test_batch_delete_and_move_only_created_videos(tmp_path):
 
     controller = Controller()
     marker = f"oc_remote_batch_test_{uuid4().hex}"
-    delete_names = [f"{marker}_delete_{i}.mp4" for i in range(2)]
+    delete_names = [f"{marker}_delete_{i}.mp4" for i in range(3)]
     move_names = [f"{marker}_move_{i}.mp4" for i in range(2)]
     names = delete_names + move_names
 
@@ -93,7 +93,7 @@ async def test_batch_delete_and_move_only_created_videos(tmp_path):
             assert deleted.status == 202
             delete_job = await wait_job(http, "/api/file-operation")
             assert delete_job["outcome"] == "verified"
-            assert delete_job["completed"] == delete_job["total"] == 2
+            assert delete_job["completed"] == delete_job["total"] == 3
             assert controller.tone.events == ["success"]
             for name in delete_names:
                 assert not await remote_exists(controller.adb, f"{DEFAULT_PHONE_FOLDER}/{name}")

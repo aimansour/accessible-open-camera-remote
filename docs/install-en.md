@@ -51,6 +51,9 @@ checkboxes. Copy, move, and delete work on all selected videos; rename appears
 only for one. Actions that cannot be used are hidden. Copy publishes a PC file
 only after size and SHA-256 match. Move removes the phone source only after a
 verified copy. Delete confirms every full name and shows each file's stage.
+During deletion, the progress bar shows the percentage of files checked and
+the number verified deleted. Each verified video disappears from the list;
+uncertain files remain for inspection. This is file count progress, not bytes.
 
 ## Recovery
 

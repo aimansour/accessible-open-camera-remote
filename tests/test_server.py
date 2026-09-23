@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -95,7 +96,10 @@ async def test_page_serves_session_token_and_web_assets(client):
     http, _ = client
     page = await http.get("/")
     assert page.status == 200
-    assert '<meta name="session-token" content="valid">' in await page.text()
+    page_html = await page.text()
+    assert '<meta name="session-token" content="valid">' in page_html
+    assert "__PC_FOLDER__" not in page_html
+    assert str(Path.home() / "Videos" / "OpenCameraRemote") in page_html
     script = await http.get("/app.js")
     assert script.status == 200
     assert "renderCamera" in await script.text()
@@ -117,4 +121,56 @@ async def test_video_catalog_returns_selected_folder_entries(client):
 async def test_catalog_rejects_folder_outside_shared_storage(client):
     http, _ = client
     response = await http.get("/api/videos?folder=/data/local/tmp")
+    assert response.status == 400
+
+
+async def test_copy_batch_returns_202_and_reports_progress(client, monkeypatch, tmp_path):
+    http, controller = client
+    release = asyncio.Event()
+
+    class FakeAdb:
+        async def run(self, *args, **kwargs):
+            return b"clip.mp4\x004\x001.0\x00"
+
+    class FakeTone:
+        def __init__(self):
+            self.events = []
+
+        def success(self):
+            self.events.append("success")
+
+        def failure(self):
+            self.events.append("failure")
+
+    async def fake_copy_many(adb, entries, folder, pc_folder, progress=None):
+        progress("clip.mp4", "copying")
+        await release.wait()
+        from oc_remote.transfer import TransferResult
+        return [TransferResult("clip.mp4", "verified", str(pc_folder / "clip.mp4"), "verified")]
+
+    controller.adb = FakeAdb()
+    controller.tone = FakeTone()
+    monkeypatch.setattr("oc_remote.server.copy_many", fake_copy_many)
+    response = await http.post("/api/copy", json={
+        "names": ["clip.mp4"], "folder": "/sdcard/DCIM/OpenCamera", "destination": str(tmp_path),
+    }, headers=auth(http))
+    assert response.status == 202
+    status = await http.get("/api/transfers")
+    assert (await status.json())["total"] == 1
+    release.set()
+    await asyncio.sleep(0)
+    assert controller.tone.events == ["success"]
+
+
+async def test_copy_rejects_unlisted_name(client, tmp_path):
+    http, controller = client
+
+    class FakeAdb:
+        async def run(self, *args, **kwargs):
+            return b"clip.mp4\x004\x001.0\x00"
+
+    controller.adb = FakeAdb()
+    response = await http.post("/api/copy", json={
+        "names": ["other.mp4"], "folder": "/sdcard/DCIM/OpenCamera", "destination": str(tmp_path),
+    }, headers=auth(http))
     assert response.status == 400

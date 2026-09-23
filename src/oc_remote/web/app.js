@@ -9,6 +9,9 @@ const labels = {
     videosHeading: "الفيديوهات المكتملة", phoneFolderLabel: "مجلد Open Camera على الهاتف",
     refreshVideos: "عرض الفيديوهات", videosHint: "اختر الملفات بمربعات الاختيار. ستظهر أوامر النسخ والإدارة هنا.",
     noVideos: "لا توجد فيديوهات في هذا المجلد.", videosError: "تعذرت قراءة فيديوهات الهاتف.", bytes: "بايت",
+    transferHeading: "نسخ الفيديوهات إلى الكمبيوتر", pcFolderLabel: "مجلد الحفظ على الكمبيوتر", copy: "نسخ المحدد",
+    transferPending: "جارٍ نسخ الملفات", transferFinished: "اكتملت المجموعة", transferError: "تعذر قراءة تقدم النسخ",
+    transferCount: "ملفات مكتملة", stages: { waiting: "بانتظار النسخ", copying: "جارٍ النسخ", hashing: "جارٍ فحص البصمة", verified: "نسخة مؤكدة", failed: "فشل النسخ" },
     start: "بدء التسجيل", stop: "إنهاء التسجيل", pause: "إيقاف مؤقت", resume: "استئناف",
     unknown: "حالة التسجيل غير معروفة", idle: "جاهز للتسجيل", recording: "جارٍ التسجيل", paused: "التسجيل متوقف مؤقتًا",
     verificationOn: "إيقاف الفحص", verificationOff: "تشغيل الفحص", pending: "جارٍ التحقق من النتيجة",
@@ -35,6 +38,9 @@ const labels = {
     videosHeading: "Completed videos", phoneFolderLabel: "Open Camera folder on phone",
     refreshVideos: "Show videos", videosHint: "Select files with checkboxes. Copy and management commands will appear here.",
     noVideos: "No videos in this folder.", videosError: "Could not read phone videos.", bytes: "bytes",
+    transferHeading: "Copy videos to PC", pcFolderLabel: "PC destination folder", copy: "Copy selected",
+    transferPending: "Copying files", transferFinished: "Batch complete", transferError: "Could not read transfer progress",
+    transferCount: "files complete", stages: { waiting: "Waiting", copying: "Copying", hashing: "Checking SHA-256", verified: "Verified copy", failed: "Copy failed" },
     start: "Start recording", stop: "Stop recording", pause: "Pause", resume: "Resume",
     unknown: "Recording state unknown", idle: "Ready to record", recording: "Recording", paused: "Recording paused",
     verificationOn: "Stop verification", verificationOff: "Start verification", pending: "Checking the result",
@@ -58,11 +64,14 @@ const labels = {
 const cameraButton = document.getElementById("camera");
 const pauseButton = document.getElementById("pause");
 const verificationButton = document.getElementById("verification");
+const copyButton = document.getElementById("copy");
 const languageSelect = document.getElementById("language");
 const token = document.querySelector('meta[name="session-token"]').content;
 let language = "ar";
 let current = { state: "unknown", verification_enabled: true, busy: false, message: "" };
 let currentVideos = null;
+let transferJob = null;
+let lastTransferJson = null;
 
 function renderCamera(status) {
   const words = labels[language];
@@ -84,12 +93,13 @@ function render() {
   document.documentElement.lang = language;
   document.documentElement.dir = language === "ar" ? "rtl" : "ltr";
   document.title = words.title;
-  for (const id of ["title", "subtitle", "cameraHeading", "verificationHeading", "verificationHelp", "cameraHint", "videosHeading", "videosHint", "refreshVideos", "phoneFolderLabel"]) {
+  for (const id of ["title", "subtitle", "cameraHeading", "verificationHeading", "verificationHelp", "cameraHint", "videosHeading", "videosHint", "refreshVideos", "phoneFolderLabel", "transferHeading", "pcFolderLabel", "copy"]) {
     document.getElementById(id).textContent = words[id];
   }
   document.getElementById("languageLabel").textContent = words.language;
   renderCamera(current);
   if (currentVideos !== null) renderVideos(currentVideos);
+  if (transferJob !== null) renderTransfers(transferJob);
 }
 
 function renderVideos(entries) {
@@ -110,6 +120,46 @@ function renderVideos(entries) {
     label.append(checkbox, document.createTextNode(`${entry.name} — ${size} ${words.bytes} — ${date}`));
     item.append(label);
     list.append(item);
+  }
+  updateCopyAvailability();
+}
+
+function selectedNames() {
+  return [...document.querySelectorAll('#videos input:checked')].map(box => box.value);
+}
+
+function updateCopyAvailability() {
+  copyButton.setAttribute("aria-disabled", String(selectedNames().length === 0 || (transferJob && transferJob.running)));
+}
+
+function renderTransfers(job) {
+  const words = labels[language];
+  const list = document.getElementById("transferResults");
+  list.replaceChildren();
+  document.getElementById("transferSummary").textContent = job.total ?
+    `${job.running ? words.transferPending : words.transferFinished}: ${job.completed}/${job.total} ${words.transferCount}` : "";
+  for (const [name, stage] of Object.entries(job.stages)) {
+    const result = job.results.find(item => item.name === name);
+    const item = document.createElement("li");
+    item.textContent = `${name} — ${words.stages[stage] || stage}${result && result.outcome === "failed" ? ` — ${result.message}` : ""}`;
+    list.append(item);
+  }
+  updateCopyAvailability();
+}
+
+async function refreshTransfers() {
+  try {
+    const response = await fetch("/api/transfers", { cache: "no-store" });
+    if (!response.ok) throw new Error("transfer status request failed");
+    const job = await response.json();
+    const json = JSON.stringify(job);
+    if (json !== lastTransferJson) {
+      transferJob = job;
+      lastTransferJson = json;
+      renderTransfers(job);
+    }
+  } catch (_) {
+    document.getElementById("transferSummary").textContent = labels[language].transferError;
   }
 }
 
@@ -172,6 +222,23 @@ verificationButton.addEventListener("click", async () => {
 });
 languageSelect.addEventListener("change", () => { language = languageSelect.value; render(); });
 document.getElementById("refreshVideos").addEventListener("click", refreshVideos);
+document.getElementById("videos").addEventListener("change", updateCopyAvailability);
+copyButton.addEventListener("click", async () => {
+  if (copyButton.getAttribute("aria-disabled") === "true") return;
+  try {
+    const response = await fetch("/api/copy", {
+      method: "POST", headers: { "Content-Type": "application/json", "X-Session-Token": token },
+      body: JSON.stringify({ names: selectedNames(), folder: document.getElementById("phoneFolder").value,
+        destination: document.getElementById("pcFolder").value })
+    });
+    if (!response.ok) throw new Error(await response.text());
+    await refreshTransfers();
+  } catch (error) {
+    document.getElementById("transferSummary").textContent = error.message;
+  }
+});
 refresh();
 refreshVideos();
+refreshTransfers();
 setInterval(refresh, 1000);
+setInterval(refreshTransfers, 1000);

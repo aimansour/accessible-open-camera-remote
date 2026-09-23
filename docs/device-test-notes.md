@@ -44,3 +44,15 @@ The user confirmed that NVDA browse-mode navigation and button position worked
 normally in their browser. This was a demonstration page with a fake camera
 controller, so it did not test result tones or a real phone command through
 the browser; those remain for the complete workflow acceptance.
+
+## Verified copy check
+
+The newest video in the configured Open Camera folder was copied to
+`Videos/OpenCameraRemote/verification-2026-09-23` on the PC. Its source size
+was 6,209,577 bytes. `copy_one` reported verified after comparing local and
+phone size and SHA-256, and the destination file existed. The phone source was
+not removed. A separate browser demonstration used an Arabic-named fake video
+and showed one verified result in a native list; focus stayed on the Copy
+button, and the browser reported no console errors. This does not yet prove
+NVDA announces transfer progress in the user's preferred way; the page does
+not use automatic announcements.

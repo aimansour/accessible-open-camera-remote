@@ -1,19 +1,26 @@
 """Loopback HTTP API for the browser controls."""
 
+import asyncio
 from dataclasses import asdict
 from html import escape
 from pathlib import Path
+from uuid import uuid4
 
 from aiohttp import web
 
 from .camera import CameraAction, CommandBusy, CommandUnavailable
 from .catalog import DEFAULT_PHONE_FOLDER, InvalidListing, list_videos, validate_folder
 from .adb import AdbFailure
+from .state import CaptureState
+from .transfer import copy_many
 
 
 CONTROLLER_KEY = web.AppKey("controller", object)
 SESSION_TOKEN_KEY = web.AppKey("session_token", str)
 CAMERA_TASKS_KEY = web.AppKey("camera_tasks", set)
+TRANSFER_TASKS_KEY = web.AppKey("transfer_tasks", set)
+TRANSFER_JOB_KEY = web.AppKey("transfer_job", dict)
+VERIFIED_CATALOG_KEY = web.AppKey("verified_catalog", dict)
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
 
@@ -42,11 +49,15 @@ def create_app(controller, token: str) -> web.Application:
     app[CONTROLLER_KEY] = controller
     app[SESSION_TOKEN_KEY] = token
     app[CAMERA_TASKS_KEY] = set()
+    app[TRANSFER_TASKS_KEY] = set()
+    app[TRANSFER_JOB_KEY] = {"total": 0, "stages": {}, "results": [], "running": False, "completed": 0}
+    app[VERIFIED_CATALOG_KEY] = {}
 
     async def page(request):
         require_local_host(request)
         html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
         html = html.replace("__SESSION_TOKEN__", escape(token, quote=True))
+        html = html.replace("__PC_FOLDER__", escape(str(Path.home() / "Videos" / "OpenCameraRemote"), quote=True))
         return web.Response(text=html, content_type="text/html", charset="utf-8",
                             headers={"Cache-Control": "no-store"})
 
@@ -69,7 +80,76 @@ def create_app(controller, token: str) -> web.Application:
             entries = await list_videos(controller.adb, folder)
         except (InvalidListing, AdbFailure):
             raise web.HTTPBadGateway(text="Could not read the phone video folder")
+        camera = controller.status()
+        if camera.state is CaptureState.IDLE and camera.verification_enabled:
+            app[VERIFIED_CATALOG_KEY][folder] = {entry.name: entry for entry in entries}
         return web.json_response({"folder": folder, "videos": [asdict(entry) for entry in entries]})
+
+    async def transfers(request):
+        require_local_host(request)
+        return web.json_response(app[TRANSFER_JOB_KEY])
+
+    async def post_copy(request):
+        require_local_origin_and_token(request)
+        if app[TRANSFER_JOB_KEY]["running"]:
+            raise web.HTTPConflict(text="A transfer is already running")
+        try:
+            payload = await request.json()
+            names = payload["names"]
+            folder = validate_folder(payload.get("folder", DEFAULT_PHONE_FOLDER))
+            destination = Path(payload["destination"]).expanduser()
+            if (not isinstance(names, list) or not names or len(names) > 100
+                    or any(not isinstance(name, str) for name in names)
+                    or len(set(names)) != len(names) or not destination.is_absolute()):
+                raise ValueError
+        except (ValueError, KeyError, TypeError):
+            raise web.HTTPBadRequest(text="Choose videos and an absolute PC folder")
+
+        camera = controller.status()
+        if camera.state is CaptureState.IDLE and camera.verification_enabled:
+            try:
+                latest = await list_videos(controller.adb, folder)
+            except (InvalidListing, AdbFailure):
+                raise web.HTTPBadGateway(text="Could not read selected phone videos")
+            available = {entry.name: entry for entry in latest}
+            app[VERIFIED_CATALOG_KEY][folder] = available
+        elif not camera.verification_enabled:
+            available = app[VERIFIED_CATALOG_KEY].get(folder, {})
+        else:
+            raise web.HTTPConflict(text="Finish recording or verify camera state before copying")
+        if any(name not in available for name in names):
+            raise web.HTTPBadRequest(text="A selected video is no longer available as completed")
+        entries = [available[name] for name in names]
+        job = app[TRANSFER_JOB_KEY]
+        job.clear()
+        job.update({"id": uuid4().hex, "total": len(entries), "stages": {name: "waiting" for name in names},
+                    "results": [], "running": True, "completed": 0})
+
+        def progress(name, stage):
+            job["stages"][name] = stage
+
+        async def perform_copy():
+            try:
+                results = await copy_many(controller.adb, entries, folder, destination, progress=progress)
+                job["results"] = [asdict(result) for result in results]
+                job["completed"] = len(results)
+                if all(result.outcome == "verified" for result in results):
+                    controller.tone.success()
+                else:
+                    controller.tone.failure()
+            except Exception:
+                job["results"] = [{"name": name, "outcome": "failed", "destination": None,
+                                   "message": "Unexpected transfer error"} for name in names]
+                job["completed"] = len(names)
+                job["stages"] = {name: "failed" for name in names}
+                controller.tone.failure()
+            finally:
+                job["running"] = False
+
+        task = asyncio.create_task(perform_copy())
+        app[TRANSFER_TASKS_KEY].add(task)
+        task.add_done_callback(app[TRANSFER_TASKS_KEY].discard)
+        return web.json_response({"accepted": True, "id": job["id"]}, status=202)
 
     async def post_camera(request):
         require_local_origin_and_token(request)
@@ -107,6 +187,8 @@ def create_app(controller, token: str) -> web.Application:
     app.router.add_get("/{name:app\\.js|styles\\.css}", asset)
     app.router.add_get("/api/status", status)
     app.router.add_get("/api/videos", videos)
+    app.router.add_get("/api/transfers", transfers)
+    app.router.add_post("/api/copy", post_copy)
     app.router.add_post("/api/camera", post_camera)
     app.router.add_post("/api/verification", post_verification)
     return app

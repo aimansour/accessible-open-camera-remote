@@ -34,3 +34,11 @@ def test_video_list_uses_labeled_folder_and_native_checkboxes():
     assert 'document.createElement("input")' in script
     assert 'checkbox.type = "checkbox"' in script
     assert "innerHTML" not in script
+
+
+def test_copy_controls_are_labeled_and_progress_is_plain_text():
+    html = (WEB / "index.html").read_text(encoding="utf-8")
+    assert '<label for="pcFolder"' in html
+    assert '<button id="copy"' in html
+    assert '<ul id="transferResults"' in html
+    assert "aria-live" not in html

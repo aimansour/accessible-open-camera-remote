@@ -149,6 +149,8 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
             if any(name not in available for name in names):
                 raise web.HTTPBadRequest(text="A selected video is no longer available as completed")
             entries = [available[name] for name in names]
+            if camera.verification_enabled:
+                require_idle_for_mutation()
         except BaseException:
             app[FILE_LOCK_KEY].release()
             raise
@@ -203,6 +205,7 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
             except (ValueError, KeyError, TypeError):
                 raise web.HTTPBadRequest(text="Choose one video and a new name")
             entry = await selected_entry(folder, name)
+            require_idle_for_mutation()
             try:
                 result = await rename_one(controller.adb, entry, folder, new_stem)
             except FileExistsError:
@@ -235,6 +238,7 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
             except (ValueError, KeyError, TypeError):
                 raise web.HTTPBadRequest(text="Confirm the exact selected video name")
             entry = await selected_entry(folder, name)
+            require_idle_for_mutation()
             try:
                 await delete_one(controller.adb, entry, folder, confirmed_name)
             except (UncertainMutation, MediaIndexError, AdbFailure):
@@ -263,6 +267,7 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
             except (ValueError, KeyError, TypeError):
                 raise web.HTTPBadRequest(text="Choose one video and an absolute PC folder")
             entry = await selected_entry(folder, name)
+            require_idle_for_mutation()
         except Exception:
             app[FILE_LOCK_KEY].release()
             raise
@@ -302,8 +307,6 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
 
     async def post_camera(request):
         require_local_origin_and_token(request)
-        if app[FILE_LOCK_KEY].locked():
-            raise web.HTTPConflict(text="A phone file operation is in progress")
         try:
             payload = await request.json()
             action = CameraAction(payload["action"])
@@ -321,8 +324,6 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
 
     async def post_verification(request):
         require_local_origin_and_token(request)
-        if app[FILE_LOCK_KEY].locked():
-            raise web.HTTPConflict(text="A phone file operation is in progress")
         try:
             payload = await request.json()
         except ValueError:

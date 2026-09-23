@@ -224,6 +224,69 @@ async def test_copy_batch_returns_202_and_reports_progress(client, monkeypatch, 
     assert controller.tone.events == ["success"]
 
 
+async def test_camera_key_bypasses_active_copy_of_captured_old_video(monkeypatch, tmp_path):
+    copy_started, release_copy, key_sent, release_dump = (
+        asyncio.Event() for _ in range(4)
+    )
+
+    class Adb:
+        def __init__(self):
+            self.dump_count = 0
+
+        async def run(self, *args, **kwargs):
+            if "find" in args:
+                return b"old.mp4\x004\x001.0\x00"
+            if "window" in args:
+                return b"mCurrentFocus=net.sourceforge.opencamera/.MainActivity\n"
+            return b"mWakefulness=Awake\n"
+
+        async def dump_ui(self):
+            self.dump_count += 1
+            if self.dump_count > 1:
+                await release_dump.wait()
+            return (b'<hierarchy><node package="net.sourceforge.opencamera" '
+                    b'resource-id="net.sourceforge.opencamera:id/take_photo" '
+                    b'content-desc="Start recording video"/></hierarchy>')
+
+        async def press(self, key):
+            key_sent.set()
+
+    class Tone:
+        def success(self):
+            pass
+
+        def failure(self):
+            pass
+
+    async def held_copy(adb, entries, folder, destination, progress=None):
+        assert [entry.name for entry in entries] == ["old.mp4"]
+        copy_started.set()
+        await release_copy.wait()
+        from oc_remote.transfer import TransferResult
+        return [TransferResult("old.mp4", "verified", str(destination / "old.mp4"), "verified")]
+
+    monkeypatch.setattr("oc_remote.server.copy_many", held_copy)
+    controller = CameraController(Adb(), Tone())
+    await controller.start_session()
+    async with TestClient(TestServer(create_app(controller, "valid"))) as http:
+        response = await http.post("/api/copy", json={
+            "names": ["old.mp4"], "destination": str(tmp_path),
+        }, headers=auth(http))
+        assert response.status == 202
+        await asyncio.wait_for(copy_started.wait(), 1)
+        camera = await http.post("/api/camera", json={"action": "start"}, headers=auth(http))
+        assert camera.status == 202
+        await asyncio.wait_for(key_sent.wait(), 1)
+        assert http.server.app[FILE_LOCK_KEY].locked()
+        another_mutation = await http.post("/api/rename", json={
+            "name": "old.mp4", "new_stem": "new",
+        }, headers=auth(http))
+        assert another_mutation.status == 409
+        release_copy.set()
+        await asyncio.sleep(0)
+    await controller.stop_verification()
+
+
 async def test_copy_rejects_unlisted_name(client, tmp_path):
     http, controller = client
 

@@ -1,5 +1,8 @@
 # Accessible Open Camera Remote
 
+[Public repository](https://github.com/aimansour/accessible-open-camera-remote)
+· [Download Windows v0.1.0](https://github.com/aimansour/accessible-open-camera-remote/releases/tag/v0.1.0)
+
 A local Windows browser control for [Open Camera](https://opencamera.org.uk/) on
 Android. It is designed for ordinary NVDA browse mode: native buttons and
 checkboxes, Arabic and English labels, no captured keyboard arrows, no screen

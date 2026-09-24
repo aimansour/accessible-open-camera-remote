@@ -99,6 +99,14 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
             raise web.HTTPNotFound(text="A selected video no longer exists")
         return [available[name] for name in names]
 
+    def require_expected_entries(entries, expected):
+        if expected is None:
+            return
+        actual = [{"name": entry.name, "size": entry.size, "modified": entry.modified}
+                  for entry in entries]
+        if expected != actual:
+            raise web.HTTPConflict(text="Selected phone files changed; refresh the list")
+
     async def page(request):
         require_local_host(request)
         html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
@@ -173,6 +181,7 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
             if any(name not in available for name in names):
                 raise web.HTTPBadRequest(text="A selected video is no longer available as completed")
             entries = [available[name] for name in names]
+            require_expected_entries(entries, payload.get("expected_entries"))
             if camera.verification_enabled:
                 require_idle_for_mutation()
         except BaseException:
@@ -180,7 +189,7 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
             raise
         job = app[TRANSFER_JOB_KEY]
         job.clear()
-        job.update({"id": uuid4().hex, "kind": "copy", "total": len(entries),
+        job.update({"id": uuid4().hex, "kind": "copy", "folder": folder, "total": len(entries),
                     "stages": {name: "waiting" for name in names},
                     "results": [], "running": True, "completed": 0})
 
@@ -236,6 +245,7 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
             except (ValueError, KeyError, TypeError):
                 raise web.HTTPBadRequest(text="Choose one video and a new name")
             entry = await selected_entry(folder, name)
+            require_expected_entries([entry], payload.get("expected_entries"))
             require_idle_for_mutation()
             try:
                 result = await rename_one(controller.adb, entry, folder, new_stem)
@@ -270,13 +280,15 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
             except (ValueError, KeyError, TypeError):
                 raise web.HTTPBadRequest(text="Confirm the exact selected video names")
             entries = await selected_entries(folder, names)
+            require_expected_entries(entries, payload.get("expected_entries"))
             require_idle_for_mutation()
         except BaseException:
             app[FILE_LOCK_KEY].release()
             raise
 
         job = app[FILE_JOB_KEY]
-        job.update({"id": uuid4().hex, "kind": "delete", "stage": "checking", "running": True,
+        job.update({"id": uuid4().hex, "kind": "delete", "folder": folder,
+                    "stage": "checking", "running": True,
                     "outcome": None, "message": "Checking selected videos", "total": len(entries),
                     "completed": 0, "stages": {entry.name: "waiting" for entry in entries},
                     "results": []})
@@ -345,13 +357,15 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
             except (ValueError, KeyError, TypeError):
                 raise web.HTTPBadRequest(text="Choose videos and an absolute PC folder")
             entries = await selected_entries(folder, names)
+            require_expected_entries(entries, payload.get("expected_entries"))
             require_idle_for_mutation()
         except Exception:
             app[FILE_LOCK_KEY].release()
             raise
         job = app[TRANSFER_JOB_KEY]
         job.clear()
-        job.update({"id": uuid4().hex, "kind": "move", "total": len(entries),
+        job.update({"id": uuid4().hex, "kind": "move", "folder": folder,
+                    "total": len(entries),
                     "stages": {entry.name: "waiting" for entry in entries},
                     "results": [], "running": True, "completed": 0})
 

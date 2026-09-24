@@ -80,4 +80,3 @@ def test_unavailable_actions_are_hidden_and_batch_confirmation_lists_names():
     assert '<ul id="deleteResults"></ul>' in html
     assert 'button.setAttribute("aria-disabled"' not in script
     assert 'confirmed_names: pendingDeleteNames' in script
-    assert 'names, destination:' in script

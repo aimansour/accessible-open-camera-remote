@@ -432,6 +432,23 @@ async def test_delete_requires_matching_explicit_confirmation(client):
     assert response.status == 400
 
 
+async def test_delete_rejects_file_identity_from_another_folder(client):
+    http, controller = client
+
+    class Adb:
+        async def run(self, *args, **kwargs):
+            return b"clip.mp4\x0020\x002.0\x00"
+
+    controller.adb = Adb()
+    response = await http.post("/api/delete", json={
+        "folder": "/sdcard/DCIM/Other", "names": ["clip.mp4"],
+        "confirmed_names": ["clip.mp4"],
+        "expected_entries": [{"name": "clip.mp4", "size": 10, "modified": 1.0}],
+    }, headers=auth(http))
+    assert response.status == 409
+    assert not http.server.app[FILE_LOCK_KEY].locked()
+
+
 async def test_batch_delete_requires_exact_confirmed_selection(client):
     http, controller = client
 

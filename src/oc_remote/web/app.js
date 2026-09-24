@@ -121,6 +121,7 @@ let cameraRequests = Promise.resolve();
 let commandEpoch = 0;
 let receivedCameraStatus = false;
 let currentVideos = null;
+let currentVideosFolder = null;
 let transferJob = null;
 let activeMoveJobId = null;
 let handledMoveJobId = null;
@@ -207,8 +208,8 @@ function renderVideos(entries) {
   updateSelectAll();
 }
 
-function removeVerifiedVideos(names) {
-  if (!names.length) return;
+function removeVerifiedVideos(names, folder) {
+  if (!names.length || folder !== currentVideosFolder) return;
   const removed = new Set(names);
   videoRevision++;
   if (currentVideos !== null) {
@@ -234,15 +235,42 @@ function selectedNames() {
   return [...document.querySelectorAll('#videos input:checked')].map(box => box.value);
 }
 
+function selectedEntries(names) {
+  return names.map(name => {
+    const entry = currentVideos?.find(item => item.name === name);
+    return entry && { name: entry.name, size: entry.size, modified: entry.modified };
+  });
+}
+
+function catalogMatchesInput() {
+  return currentVideosFolder !== null
+    && currentVideosFolder === document.getElementById("phoneFolder").value;
+}
+
+function invalidateCatalog() {
+  currentVideos = null;
+  currentVideosFolder = null;
+  videoRevision++;
+  videoRequestId++;
+  pendingDeleteNames = null;
+  document.getElementById("confirmationBox").hidden = true;
+  document.getElementById("videos").replaceChildren();
+  document.getElementById("videosMessage").textContent = "";
+  updateSelectAll();
+  updateMutationAvailability();
+}
+
 function updateCopyAvailability() {
-  copyButton.hidden = selectedNames().length === 0 || current.confirmed_state !== "idle"
+  copyButton.hidden = !catalogMatchesInput() || selectedNames().length === 0
+    || current.confirmed_state !== "idle"
     || !current.verification_enabled || current.busy || fileBusy
     || (fileOperation && fileOperation.running) || (transferJob && transferJob.running);
 }
 
 function updateMutationAvailability() {
   const count = selectedNames().length;
-  const allowed = current.confirmed_state === "idle" && current.verification_enabled && !current.busy && !fileBusy
+  const allowed = catalogMatchesInput() && current.confirmed_state === "idle"
+    && current.verification_enabled && !current.busy && !fileBusy
     && !(fileOperation && fileOperation.running) && !(transferJob && transferJob.running);
   moveButton.hidden = !allowed || count === 0;
   deleteButton.hidden = !allowed || count === 0;
@@ -265,7 +293,8 @@ async function mutationRequest(endpoint, payload) {
 
 async function runMutation(action) {
   const names = selectedNames();
-  if (!names.length || (action === "rename" && names.length !== 1) || fileBusy) return;
+  if (!catalogMatchesInput() || !names.length || selectedEntries(names).some(entry => !entry)
+      || (action === "rename" && names.length !== 1) || fileBusy) return;
   fileBusy = true;
   updateMutationAvailability();
   const words = labels[language];
@@ -278,19 +307,25 @@ async function runMutation(action) {
   try {
     if (action === "move") {
       const accepted = await mutationRequest("/api/move", {
-        folder, names, destination: document.getElementById("pcFolder").value
+        folder, names, expected_entries: selectedEntries(names),
+        destination: document.getElementById("pcFolder").value
       });
       activeMoveJobId = accepted.id;
       seenVerifiedMoveNames = new Set();
       document.getElementById("manageResult").textContent = words.moveStarted;
       await refreshTransfers();
     } else if (action === "rename") {
-      await mutationRequest("/api/rename", { folder, name: names[0], new_stem: document.getElementById("newStem").value });
+      await mutationRequest("/api/rename", {
+        folder, name: names[0], expected_entries: selectedEntries(names),
+        new_stem: document.getElementById("newStem").value
+      });
       document.getElementById("manageResult").textContent = words.renamed;
       document.getElementById("newStem").value = "";
       await refreshVideos();
     } else if (action === "delete") {
-      const accepted = await mutationRequest("/api/delete", { folder, names, confirmed_names: pendingDeleteNames });
+      const accepted = await mutationRequest("/api/delete", {
+        folder, names, expected_entries: selectedEntries(names), confirmed_names: pendingDeleteNames
+      });
       activeDeleteJobId = accepted.id;
       seenVerifiedDeleteNames = new Set();
       fileOperation = { id: accepted.id, kind: "delete", stage: "checking", running: true,
@@ -346,7 +381,7 @@ function renderFileOperation(job) {
     const newlyVerified = verifiedNames.filter(name => !seenVerifiedDeleteNames.has(name));
     if (newlyVerified.length) {
       for (const name of newlyVerified) seenVerifiedDeleteNames.add(name);
-      removeVerifiedVideos(newlyVerified);
+      removeVerifiedVideos(newlyVerified, job.folder);
     }
   }
   if (!job.running && job.id !== handledFileJobId) {
@@ -417,14 +452,14 @@ function renderTransfers(job) {
         .filter(result => result.outcome === "verified" && !seenVerifiedMoveNames.has(result.name))
         .map(result => result.name);
       for (const name of newlyVerified) seenVerifiedMoveNames.add(name);
-      removeVerifiedVideos(newlyVerified);
+      removeVerifiedVideos(newlyVerified, job.folder);
       if (!job.running && job.id !== handledMoveJobId) {
         handledMoveJobId = job.id;
         activeMoveJobId = null;
         seenVerifiedMoveNames = new Set();
         const selected = new Set(Object.keys(job.stages || {}));
         for (const box of document.querySelectorAll('#videos input:checked')) {
-          if (selected.has(box.value)) box.checked = false;
+          if (job.folder === currentVideosFolder && selected.has(box.value)) box.checked = false;
         }
         updateSelectAll();
         refreshVideos();
@@ -466,6 +501,7 @@ async function refreshVideos() {
     if (requestId !== videoRequestId || revision !== videoRevision
         || folder !== document.getElementById("phoneFolder").value) return;
     currentVideos = payload.videos;
+    currentVideosFolder = payload.folder;
     renderVideos(currentVideos);
   } catch (_) {
     if (requestId === videoRequestId) {
@@ -551,6 +587,7 @@ verificationButton.addEventListener("click", async () => {
 });
 languageSelect.addEventListener("change", () => { language = languageSelect.value; render(); });
 document.getElementById("refreshVideos").addEventListener("click", refreshVideos);
+document.getElementById("phoneFolder").addEventListener("input", invalidateCatalog);
 selectAllButton.addEventListener("click", () => {
   if (selectAllButton.hidden) return;
   const boxes = [...document.querySelectorAll('#videos input[type="checkbox"]')];
@@ -570,11 +607,13 @@ document.getElementById("videos").addEventListener("change", () => {
   document.getElementById("confirmationBox").hidden = true;
 });
 copyButton.addEventListener("click", async () => {
-  if (copyButton.hidden) return;
+  if (copyButton.hidden || !catalogMatchesInput()) return;
+  const names = selectedNames();
   try {
     const response = await fetch("/api/copy", {
       method: "POST", headers: { "Content-Type": "application/json", "X-Session-Token": token },
-      body: JSON.stringify({ names: selectedNames(), folder: document.getElementById("phoneFolder").value,
+      body: JSON.stringify({ names, expected_entries: selectedEntries(names),
+        folder: document.getElementById("phoneFolder").value,
         destination: document.getElementById("pcFolder").value })
     });
     if (!response.ok) throw new Error(await response.text());

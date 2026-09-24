@@ -148,7 +148,10 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
         if (camera.confirmed_state is CaptureState.IDLE and camera.verification_enabled
                 and not camera.busy):
             app[VERIFIED_CATALOG_KEY][folder] = {entry.name: entry for entry in entries}
-        return web.json_response({"folder": folder, "videos": [asdict(entry) for entry in entries]})
+        verified = app[VERIFIED_CATALOG_KEY].get(folder, {})
+        copyable = [entry.name for entry in entries if verified.get(entry.name) == entry]
+        return web.json_response({"folder": folder, "videos": [asdict(entry) for entry in entries],
+                                  "copyable_names": copyable})
 
     async def transfers(request):
         require_local_host(request)

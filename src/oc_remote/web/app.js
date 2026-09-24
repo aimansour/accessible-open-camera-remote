@@ -14,6 +14,7 @@ const labels = {
     transferPending: "جارٍ نسخ الملفات", transferFinished: "اكتملت المجموعة", transferError: "تعذر قراءة تقدم النسخ",
     transferCount: "ملفات مكتملة", stages: { waiting: "بانتظار النسخ", copying: "جارٍ النسخ", hashing: "جارٍ فحص البصمة", verified: "نسخة مؤكدة", failed: "فشل النسخ", uncertain: "نتيجة النقل غير مؤكدة" },
     uncertainMoveDetail: "نسخة الكمبيوتر مؤكدة؛ حذف الأصل من الهاتف غير مؤكد. افحص الملفين قبل أي إجراء آخر.",
+    uncertainMoveUnknownDetail: "لم يمكن تأكيد وجود نسخة على الكمبيوتر أو حذف الأصل. افحص الهاتف والكمبيوتر.",
     failedCopyDetail: "تعذر تأكيد النسخة. راجع الاتصال والمساحة ثم حاول من جديد.",
     manageHeading: "إدارة الفيديوهات المحددة", manageHint: "حدد فيديوهات مكتملة بعد إنهاء التسجيل والتحقق من حالته.",
     move: "نقل المحدد إلى الكمبيوتر", newStemLabel: "الاسم الجديد من دون الامتداد", rename: "إعادة التسمية",
@@ -64,6 +65,7 @@ const labels = {
     transferPending: "Copying files", transferFinished: "Batch complete", transferError: "Could not read transfer progress",
     transferCount: "files complete", stages: { waiting: "Waiting", copying: "Copying", hashing: "Checking SHA-256", verified: "Verified copy", failed: "Copy failed", uncertain: "Uncertain move" },
     uncertainMoveDetail: "The PC copy is verified; phone source removal is uncertain. Check both files before another action.",
+    uncertainMoveUnknownDetail: "Neither a PC copy nor phone source removal was confirmed. Check both devices.",
     failedCopyDetail: "The copy could not be verified. Check the connection and free space, then retry.",
     manageHeading: "Manage selected videos", manageHint: "Select completed videos after recording has stopped and its state is verified.",
     move: "Move selected to PC", newStemLabel: "New name without extension", rename: "Rename",
@@ -122,6 +124,7 @@ let commandEpoch = 0;
 let receivedCameraStatus = false;
 let currentVideos = null;
 let currentVideosFolder = null;
+let currentCopyableNames = new Set();
 let transferJob = null;
 let activeMoveJobId = null;
 let handledMoveJobId = null;
@@ -250,6 +253,7 @@ function catalogMatchesInput() {
 function invalidateCatalog() {
   currentVideos = null;
   currentVideosFolder = null;
+  currentCopyableNames = new Set();
   videoRevision++;
   videoRequestId++;
   pendingDeleteNames = null;
@@ -261,9 +265,12 @@ function invalidateCatalog() {
 }
 
 function updateCopyAvailability() {
-  copyButton.hidden = !catalogMatchesInput() || selectedNames().length === 0
-    || current.confirmed_state !== "idle"
-    || !current.verification_enabled || current.busy || fileBusy
+  const names = selectedNames();
+  copyButton.hidden = !catalogMatchesInput() || names.length === 0
+    || names.some(name => !currentCopyableNames.has(name))
+    || current.message === "__disconnected__"
+    || (current.verification_enabled && (current.confirmed_state !== "idle" || current.busy))
+    || fileBusy
     || (fileOperation && fileOperation.running) || (transferJob && transferJob.running);
 }
 
@@ -436,7 +443,8 @@ function renderTransfers(job) {
       item = document.createElement("li");
       item.dataset.name = name;
     }
-    const detail = result?.outcome === "uncertain" ? words.uncertainMoveDetail
+    const detail = result?.outcome === "uncertain" ?
+      (result.destination ? words.uncertainMoveDetail : words.uncertainMoveUnknownDetail)
       : result?.outcome === "failed" ? words.failedCopyDetail : "";
     const description = `${name} — ${words.stages[stage] || stage}${detail ? ` — ${detail}` : ""}`;
     if (item.textContent !== description) item.textContent = description;
@@ -502,6 +510,7 @@ async function refreshVideos() {
         || folder !== document.getElementById("phoneFolder").value) return;
     currentVideos = payload.videos;
     currentVideosFolder = payload.folder;
+    currentCopyableNames = new Set(payload.copyable_names || []);
     renderVideos(currentVideos);
   } catch (_) {
     if (requestId === videoRequestId) {

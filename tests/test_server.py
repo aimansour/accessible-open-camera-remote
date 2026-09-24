@@ -178,6 +178,22 @@ async def test_video_catalog_returns_selected_folder_entries(client):
     assert (await response.json())["videos"][0]["name"] == "clip.mp4"
 
 
+async def test_catalog_retains_copyable_completed_file_when_verification_stops(client):
+    http, controller = client
+
+    class Adb:
+        async def run(self, *args, **kwargs):
+            return b"clip.mp4\x004\x001.0\x00"
+
+    controller.adb = Adb()
+    first = await (await http.get("/api/videos")).json()
+    assert first["copyable_names"] == ["clip.mp4"]
+    controller.state = CaptureState.UNKNOWN
+    controller.verification_enabled = False
+    second = await (await http.get("/api/videos")).json()
+    assert second["copyable_names"] == ["clip.mp4"]
+
+
 async def test_catalog_rejects_folder_outside_shared_storage(client):
     http, _ = client
     response = await http.get("/api/videos?folder=/data/local/tmp")

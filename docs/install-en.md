@@ -51,6 +51,9 @@ checkboxes. Copy, move, and delete work on all selected videos; rename appears
 only for one. Actions that cannot be used are hidden. Copy publishes a PC file
 only after size and SHA-256 match. Move removes the phone source only after a
 verified copy. Delete confirms every full name and shows each file's stage.
+Changing the phone-folder field clears the previous selection; refresh the
+list before choosing files in the new folder. A previously verified completed
+video can still be copied while verification is off.
 During deletion, the progress bar shows the percentage of files checked and
 the number verified deleted. Each verified video disappears from the list;
 uncertain files remain for inspection. This is file count progress, not bytes.
@@ -62,6 +65,8 @@ a toggle. Check the phone, reconnect ADB if necessary, then start verification
 to read its actual state. A partial PC copy is removed automatically and is
 never presented as verified. If a move says the copy is verified but phone
 removal is uncertain, inspect both devices before another move.
+The default ADB pull deadline is 60 minutes. A failed or timed-out pull does
+not publish a partial PC file.
 
 The program assumes Open Camera writes recording files in
 `/sdcard/DCIM/OpenCamera` for finalization evidence. The file-list field can

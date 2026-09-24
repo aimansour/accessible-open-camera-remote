@@ -16,13 +16,17 @@ class AdbTimeout(AdbFailure):
 
 
 class AdbClient:
-    def __init__(self, serial: str, executable: Path, runner=None, diagnostics=None):
+    def __init__(self, serial: str, executable: Path, runner=None, diagnostics=None,
+                 pull_timeout: float = 3600):
         if not serial or serial.startswith("-"):
             raise ValueError("A selected device serial is required")
+        if pull_timeout <= 0:
+            raise ValueError("Pull timeout must be positive")
         self.serial = serial
         self.executable = Path(executable)
         self._runner = runner
         self._diagnostics = diagnostics
+        self.pull_timeout = pull_timeout
 
     def _record(self, event: str, started: float, status: int | None) -> None:
         if self._diagnostics is not None:
@@ -81,4 +85,4 @@ class AdbClient:
                 pass
 
     async def pull(self, remote: str, local: Path) -> None:
-        await self.run("pull", remote, str(local), timeout=300)
+        await self.run("pull", remote, str(local), timeout=self.pull_timeout)

@@ -1,7 +1,9 @@
 # Accessible Open Camera Remote
 
 [Public repository](https://github.com/aimansour/accessible-open-camera-remote)
-· [Download Windows v0.1.2](https://github.com/aimansour/accessible-open-camera-remote/releases/tag/v0.1.2)
+· [Existing public Windows release v0.1.2](https://github.com/aimansour/accessible-open-camera-remote/releases/tag/v0.1.2)
+
+The current checkout contains local fixes under test. They have not been published as a new release.
 
 A local Windows browser control for [Open Camera](https://opencamera.org.uk/) on
 Android. It is designed for ordinary NVDA browse mode: native buttons and
@@ -21,6 +23,10 @@ Android Debug Bridge (ADB); it does not install a phone app or change TalkBack.
   Deletion uses two concurrent file workers. The page shows the percentage of
   files checked and removes each video after its deletion is verified.
   Rename appears for one selected video. Unavailable actions are hidden.
+- A selected file is tied to the folder and metadata that were shown. Editing
+  the phone-folder field clears the old selection; refresh to select files in
+  the new folder. Completed files previously verified while idle can still be
+  copied while verification is off.
 - Run recording controls while a copy of an older selected video is in
   progress. File mutations require a confirmed idle camera state.
 
@@ -54,14 +60,17 @@ Copy uses a temporary PC file and publishes it only after size and SHA-256
 match. Move deletes the phone original only after the copy is verified. Delete
 requires confirming the exact full names of all selected files. Uncertain
 results do not retry a camera key or claim a successful file mutation.
+ADB pull has a 60-minute default deadline for large recordings; a failed or
+timed-out transfer leaves no published partial copy.
 
 ## Tested scope and current limits
 
 The device workflow was exercised on Windows 10 Pro, Samsung SM-A155F,
 Android 16, Open Camera 1.56.2, and ADB 37.0.1. Browser focus and button names
 were checked in Arabic and English. The user reported that NVDA interaction
-and USB-C microphone sound worked in their session. Batch delete and move
-were tested on five disposable files created by the latest device test. Other
+and USB-C microphone sound worked in their session. The latest local opt-in
+batch test used seven disposable files: three deleted and four copied then
+moved, with a camera command submitted during the move. Other
 phones, Open Camera versions, and nondefault recording folders are unverified.
 Recording finalization currently checks `/sdcard/DCIM/OpenCamera`.
 

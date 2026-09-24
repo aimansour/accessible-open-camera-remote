@@ -54,6 +54,22 @@ async def test_nonzero_exit_is_failure(fake_process):
         await adb.run("devices")
 
 
+async def test_pull_uses_a_configurable_deadline_longer_than_five_minutes():
+    deadlines = []
+
+    def runner(args, **kwargs):
+        deadlines.append(kwargs["timeout"])
+        return subprocess.CompletedProcess(args, 0, b"", b"")
+
+    default = AdbClient("phone-serial", Path("adb"), runner=runner)
+    await default.pull("/sdcard/DCIM/OpenCamera/large.mp4", Path("large.mp4"))
+    configured = AdbClient("phone-serial", Path("adb"), runner=runner,
+                           pull_timeout=1800)
+    await configured.pull("/sdcard/DCIM/OpenCamera/large.mp4", Path("large.mp4"))
+    assert deadlines[0] > 300
+    assert deadlines[1] == 1800
+
+
 @pytest.mark.parametrize("fail_at", [None, 2])
 async def test_dump_always_removes_temporary_file(fake_process, fail_at):
     fake_process.fail_at = fail_at

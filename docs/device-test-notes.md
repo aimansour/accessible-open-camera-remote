@@ -197,3 +197,20 @@ labels, and no browser errors. Selecting then clearing the new recording
 showed then hid its file-action buttons without sending a mutation. With
 `OC_PACKAGE_ROOT` pointing to this build, the test suite reported 138 passed
 and 5 skipped (opt-in device tests). No package was uploaded or published.
+
+## Whole-repository review fixes and v0.1.3 release gate
+
+On 2026-09-24, a repository-wide review identified eight findings. The fixes
+bind file selections to their source folder and file identity; isolate camera
+verification generations; cancel manual checks when verification stops; keep
+file mutations out of recording evidence; expose verified copies while camera
+verification is off; describe uncertain moves accurately; and allow a longer
+configurable pull deadline. The Arabic and English guides were aligned.
+
+The opt-in phone batch gate passed in 46.36 seconds after these fixes. It
+created only random test MP4s, deleted three, copied and moved four with
+SHA-256 and Android MediaStore checks, and started/stopped a short recording
+during the move. The new recording remains on the phone for review. The
+rebuilt Windows package suite reported 144 passed and 5 skipped. The packaged
+`app.js` SHA-256 matched the source. User NVDA acceptance of this exact release
+is still outstanding.

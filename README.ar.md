@@ -1,9 +1,7 @@
 # التحكم الميسّر في Open Camera
 
 [المستودع العام](https://github.com/aimansour/accessible-open-camera-remote)
-· [الإصدار العام الحالي Windows v0.1.2](https://github.com/aimansour/accessible-open-camera-remote/releases/tag/v0.1.2)
-
-توجد في المستودع تعديلات محلية قيد الاختبار، ولم تُنشر كإصدار جديد بعد.
+· [إصدار Windows v0.1.3](https://github.com/aimansour/accessible-open-camera-remote/releases/tag/v0.1.3)
 
 برنامج محلي على Windows يفتح صفحة عادية في المتصفح للتحكم في تطبيق
 [Open Camera](https://opencamera.org.uk/) على هاتف Android. الواجهة عربية

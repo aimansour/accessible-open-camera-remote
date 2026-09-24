@@ -1,6 +1,6 @@
 # Catalog synchronization and measured transfers implementation plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. The user explicitly requested that the current agent do the work without subagents.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking. The user explicitly requested that the current agent do the work without subagents.
 
 **Goal:** Show finalized recordings automatically, remove verified moved videos immediately, and use measured concurrency for copy and move.
 
@@ -34,11 +34,11 @@
 
 **Interfaces:** Transfer jobs returned by `/api/transfers` include `kind` (`copy` or `move`), `stages`, `results`, `completed`, `total`, `running`; `copy_many(..., on_result=None, max_workers=2)` returns results in input order and calls `on_result(result)` at completion of each file.
 
-- [ ] Write a failing server test: hold one copied file while another completes and assert `/api/transfers` reports `kind: copy`, one result and `completed: 1` before the batch ends. Assert one tone only after all finish.
-- [ ] Run the focused test and confirm it fails for the missing incremental result and kind.
-- [ ] Implement the minimal contract in `post_copy`; preserve failure outcomes and the file lock.
-- [ ] Run focused tests, then `uv run pytest -q`; confirm all pass before moving on.
-- [ ] Commit the task locally; do not push.
+- [x] Write a failing server test: hold one copied file while another completes and assert `/api/transfers` reports `kind: copy`, one result and `completed: 1` before the batch ends. Assert one tone only after all finish.
+- [x] Run the focused test and confirm it fails for the missing incremental result and kind.
+- [x] Implement the minimal contract in `post_copy`; preserve failure outcomes and the file lock.
+- [x] Run focused tests, then `uv run pytest -q`; confirm all pass before moving on.
+- [x] Commit the task locally; do not push.
 
 ### Task 2: Bounded concurrent transfers
 
@@ -46,11 +46,11 @@
 
 **Interfaces:** `copy_many` runs at most two `copy_one` calls concurrently, returns results in request order, and reports each completion. `post_move` runs at most four `move_one` calls concurrently, tracks independent outcomes, and retains one final tone.
 
-- [ ] Write failing event-controlled tests: two copies enter together while a third waits; four moves enter together while a fifth waits. Release one worker and assert only one waiting item starts. Assert partial results and final aggregate outcomes.
-- [ ] Run each focused test to see the expected sequential behavior fail.
-- [ ] Implement bounded worker pools without weakening per-file size, SHA-256, filesystem, or MediaStore checks. Keep camera submissions outside the file lock.
-- [ ] Run focused tests and the whole suite; verify the camera-during-transfer test still passes.
-- [ ] Commit the task locally; do not push.
+- [x] Write failing event-controlled tests: two copies enter together while a third waits; four moves enter together while a fifth waits. Release one worker and assert only one waiting item starts. Assert partial results and final aggregate outcomes.
+- [x] Run each focused test to see the expected sequential behavior fail.
+- [x] Implement bounded worker pools without weakening per-file size, SHA-256, filesystem, or MediaStore checks. Keep camera submissions outside the file lock.
+- [x] Run focused tests and the whole suite; verify the camera-during-transfer test still passes.
+- [x] Commit the task locally; do not push.
 
 ### Task 3: Catalog reconciliation in the browser
 
@@ -58,11 +58,11 @@
 
 **Interfaces:** A confirmed camera transition to settled idle calls `refreshVideos` once. A verified result in a `kind: move` job removes the matching phone row and selection immediately; a verified `kind: copy` does not. `renderVideos` reuses unchanged checkbox/label nodes. Existing stale-response revision protection covers moves and deletes.
 
-- [ ] Reproduce the current failures in agent-browser with synthetic responses: zero catalog requests on confirmed stop; moved video and controls remain after verified move. Record the red results.
-- [ ] Add the smallest state reconciliation functions and transfer-kind handling. Clear selection of nonverified move results at job completion. Update action visibility immediately.
-- [ ] In agent-browser, test automatic stop refresh, move versus copy, stale listing, retained checkbox focus/selection, Arabic and English, and no console errors. Compare against the red reproductions.
-- [ ] Run `node --check src/oc_remote/web/app.js` and `uv run pytest -q`.
-- [ ] Commit the task locally; do not push.
+- [x] Reproduce the current failures in agent-browser with synthetic responses: zero catalog requests on confirmed stop; moved video and controls remain after verified move. Record the red results.
+- [x] Add the smallest state reconciliation functions and transfer-kind handling. Clear selection of nonverified move results at job completion. Update action visibility immediately.
+- [x] In agent-browser, test automatic stop refresh, move versus copy, stale listing, retained checkbox focus/selection, Arabic and English, and no console errors. Compare against the red reproductions.
+- [x] Run `node --check src/oc_remote/web/app.js` and `uv run pytest -q`.
+- [x] Commit the task locally; do not push.
 
 ### Task 4: Device and packaged acceptance
 
@@ -70,7 +70,7 @@
 
 **Interfaces:** Device tests create uniquely named MP4s, check the copied PC bytes, and inspect phone-file and MediaStore results. The built Windows executable serves the updated page; no public release artifact is created.
 
-- [ ] Extend the opt-in test to exercise multiple copy and move files and camera submission during an active move. Keep all destructive actions limited to test names.
-- [ ] Run the device gate, full suite, Windows build, package suite, and agent-browser visual/accessibility checks. Record measured transfer times and ADB preflight latency.
-- [ ] Review the whole diff for focus, stale responses, uncertain outcomes, and accidental personal-file operations. Correct any important finding with a new red-green test.
-- [ ] Leave the work as local commits and a local test build for the user's NVDA acceptance. Do not publish.
+- [x] Extend the opt-in test to exercise multiple copy and move files and camera submission during an active move. Keep all destructive actions limited to test names.
+- [x] Run the device gate, full suite, Windows build, package suite, and agent-browser visual/accessibility checks. Record measured transfer times and ADB preflight latency.
+- [x] Review the whole diff for focus, stale responses, uncertain outcomes, and accidental personal-file operations. Correct any important finding with a new red-green test.
+- [x] Leave the work as local commits and a local test build for the user's NVDA acceptance. Do not publish.

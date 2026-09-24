@@ -14,7 +14,7 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
 from oc_remote.adb import AdbClient
-from oc_remote.camera import CameraStatus
+from oc_remote.camera import CameraAction, CameraController, CameraStatus
 from oc_remote.catalog import DEFAULT_PHONE_FOLDER
 from oc_remote.files import media_path, query_media_row, remote_exists
 from oc_remote.server import create_app
@@ -38,15 +38,29 @@ async def test_batch_delete_copy_and_move_only_created_videos(tmp_path):
         def failure(self):
             self.events.append("failure")
 
+    class ObservedAdb(AdbClient):
+        def __init__(self):
+            super().__init__(serial, Path(executable))
+            self.key_sent = asyncio.Event()
+
+        async def press(self, keycode):
+            await super().press(keycode)
+            self.key_sent.set()
+
     class Controller:
         def __init__(self):
-            self.adb = AdbClient(serial, Path(executable))
+            self.adb = ObservedAdb()
             self.tone = Tone()
+            self.camera = CameraController(self.adb, Tone())
 
         def status(self):
             return CameraStatus(CaptureState.IDLE, True, False, "Test session", CaptureState.IDLE)
 
+        def submit(self, action):
+            return self.camera.submit(action)
+
     controller = Controller()
+    assert (await controller.camera.start_session()).state is CaptureState.IDLE
     marker = f"oc_remote_batch_test_{uuid4().hex}"
     delete_names = [f"{marker}_delete_{i}.mp4" for i in range(3)]
     move_names = [f"{marker}_move_{i}.mp4" for i in range(4)]
@@ -122,6 +136,16 @@ async def test_batch_delete_copy_and_move_only_created_videos(tmp_path):
                 "names": move_names, "destination": str(tmp_path / "pc"),
             }, headers=headers)
             assert moved.status == 202
+            started_camera = await http.post("/api/camera", json={"action": "start"},
+                                             headers=headers)
+            assert started_camera.status == 202
+            await asyncio.wait_for(controller.adb.key_sent.wait(), 10)
+            moving = await (await http.get("/api/transfers")).json()
+            assert moving["running"] is True
+            await asyncio.sleep(0.7)
+            stopped_camera = await http.post("/api/camera", json={"action": "stop"},
+                                             headers=headers)
+            assert stopped_camera.status == 202
             move_job = await wait_job(http, "/api/transfers")
             assert move_job["kind"] == "move"
             assert move_job["completed"] == move_job["total"] == 4
@@ -135,8 +159,21 @@ async def test_batch_delete_copy_and_move_only_created_videos(tmp_path):
                     (tmp_path / "pc" / name).read_bytes()).digest()
                 assert not await remote_exists(controller.adb, f"{DEFAULT_PHONE_FOLDER}/{name}")
                 assert await query_media_row(controller.adb, DEFAULT_PHONE_FOLDER, name) is None
+            for _ in range(120):
+                camera_status = controller.camera.status()
+                if camera_status.state is CaptureState.IDLE and not camera_status.busy:
+                    break
+                await asyncio.sleep(0.25)
+            else:
+                pytest.fail("Camera did not settle to idle after the concurrent move")
+
     finally:
-        for name in names:
-            await controller.adb.run("shell", "rm", "-f",
-                                     shlex.quote(f"{DEFAULT_PHONE_FOLDER}/{name}"), timeout=10)
-            await scan(name)
+        try:
+            if controller.camera.status().state in (CaptureState.RECORDING, CaptureState.PAUSED):
+                await controller.camera.submit(CameraAction.STOP)
+            await controller.camera.stop_verification()
+        finally:
+            for name in names:
+                await controller.adb.run("shell", "rm", "-f",
+                                         shlex.quote(f"{DEFAULT_PHONE_FOLDER}/{name}"), timeout=10)
+                await scan(name)

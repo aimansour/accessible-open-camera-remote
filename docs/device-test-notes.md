@@ -169,6 +169,15 @@ original SHA-256; all four moved phone paths and MediaStore rows were absent.
 Each batch produced one success tone, and the test cleaned only its own phone
 filenames. The gate passed in 44.73 s.
 
+A second opt-in run included a real camera key while the four-file move was
+active. The camera Start API returned 202, the ADB key completed while the
+move job still reported `running: true`, then the Stop API returned 202 and
+the camera settled to idle. The delete, copy, and move file postconditions
+still passed. This run took 46.44 s; the resulting short recording remains on
+the phone. The test server used a fixed idle status for file eligibility, but
+its camera commands were executed by a real `CameraController` and ADB client.
+The same phone gate passed again in 46.76 s after a test-cleanup safeguard.
+
 A live browser session against the updated source service started and stopped
 a short Open Camera recording. After the final idle check, the new
 `VID_20260924_065714.mp4` row appeared without a manual catalog refresh. This

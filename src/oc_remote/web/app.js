@@ -119,8 +119,13 @@ let current = { state: "unknown", confirmed_state: "unknown", verification_enabl
 let pendingCamera = 0;
 let cameraRequests = Promise.resolve();
 let commandEpoch = 0;
+let receivedCameraStatus = false;
 let currentVideos = null;
 let transferJob = null;
+let activeMoveJobId = null;
+let handledMoveJobId = null;
+let seenVerifiedMoveNames = new Set();
+let transferRefreshInFlight = false;
 let fileOperation = null;
 let handledFileJobId = null;
 let lastFileOperationJson = null;
@@ -130,6 +135,7 @@ let fileBusy = false;
 let activeDeleteJobId = null;
 let seenVerifiedDeleteNames = new Set();
 let videoRevision = 0;
+let videoRequestId = 0;
 let fileOperationRefreshInFlight = false;
 
 function renderCamera(status) {
@@ -170,26 +176,51 @@ function render() {
 
 function renderVideos(entries) {
   const list = document.getElementById("videos");
-  const selected = new Set([...list.querySelectorAll('input:checked')].map(box => box.value));
-  list.replaceChildren();
   const words = labels[language];
+  const names = new Set(entries.map(entry => entry.name));
+  for (const item of [...list.children]) {
+    if (!names.has(item.dataset.name)) item.remove();
+  }
+  const existing = new Map([...list.children].map(item => [item.dataset.name, item]));
   document.getElementById("videosMessage").textContent = entries.length ? "" : words.noVideos;
-  for (const entry of entries) {
-    const item = document.createElement("li");
-    const label = document.createElement("label");
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.value = entry.name;
-    checkbox.checked = selected.has(entry.name);
+  entries.forEach((entry, index) => {
+    let item = existing.get(entry.name);
+    if (!item) {
+      item = document.createElement("li");
+      item.dataset.name = entry.name;
+      const label = document.createElement("label");
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.value = entry.name;
+      label.append(checkbox, document.createTextNode(""));
+      item.append(label);
+    }
     const date = new Intl.DateTimeFormat(language, { dateStyle: "medium", timeStyle: "short" }).format(new Date(entry.modified * 1000));
     const size = new Intl.NumberFormat(language).format(entry.size);
-    label.append(checkbox, document.createTextNode(`${entry.name} — ${size} ${words.bytes} — ${date}`));
-    item.append(label);
-    list.append(item);
-  }
+    const description = `${entry.name} — ${size} ${words.bytes} — ${date}`;
+    const descriptionNode = item.firstElementChild.lastChild;
+    if (descriptionNode.nodeValue !== description) descriptionNode.nodeValue = description;
+    if (list.children[index] !== item) list.insertBefore(item, list.children[index] || null);
+  });
   updateCopyAvailability();
   updateMutationAvailability();
   updateSelectAll();
+}
+
+function removeVerifiedVideos(names) {
+  if (!names.length) return;
+  const removed = new Set(names);
+  videoRevision++;
+  if (currentVideos !== null) {
+    currentVideos = currentVideos.filter(entry => !removed.has(entry.name));
+  }
+  const list = document.getElementById("videos");
+  for (const box of list.querySelectorAll('input[type="checkbox"]')) {
+    if (removed.has(box.value)) box.closest("li").remove();
+  }
+  document.getElementById("videosMessage").textContent = list.children.length ? "" : labels[language].noVideos;
+  updateSelectAll();
+  updateMutationAvailability();
 }
 
 function updateSelectAll() {
@@ -246,7 +277,11 @@ async function runMutation(action) {
   }
   try {
     if (action === "move") {
-      await mutationRequest("/api/move", { folder, names, destination: document.getElementById("pcFolder").value });
+      const accepted = await mutationRequest("/api/move", {
+        folder, names, destination: document.getElementById("pcFolder").value
+      });
+      activeMoveJobId = accepted.id;
+      seenVerifiedMoveNames = new Set();
       document.getElementById("manageResult").textContent = words.moveStarted;
       await refreshTransfers();
     } else if (action === "rename") {
@@ -308,21 +343,11 @@ function renderFileOperation(job) {
   }
   for (const item of existing.values()) item.remove();
   if (job.id === activeDeleteJobId) {
-    const deleted = new Set(verifiedNames);
     const newlyVerified = verifiedNames.filter(name => !seenVerifiedDeleteNames.has(name));
     if (newlyVerified.length) {
       for (const name of newlyVerified) seenVerifiedDeleteNames.add(name);
-      videoRevision++;
+      removeVerifiedVideos(newlyVerified);
     }
-    if (currentVideos !== null) {
-      currentVideos = currentVideos.filter(entry => !deleted.has(entry.name));
-    }
-    const list = document.getElementById("videos");
-    for (const box of list.querySelectorAll('input[type="checkbox"]')) {
-      if (deleted.has(box.value)) box.closest("li").remove();
-    }
-    document.getElementById("videosMessage").textContent = list.children.length ? "" : words.noVideos;
-    updateSelectAll();
   }
   if (!job.running && job.id !== handledFileJobId) {
     handledFileJobId = job.id;
@@ -360,25 +385,63 @@ async function refreshFileOperation(force = false) {
 function renderTransfers(job) {
   const words = labels[language];
   const list = document.getElementById("transferResults");
-  list.replaceChildren();
+  const stages = Object.entries(job.stages || {});
+  const resultByName = new Map((job.results || []).map(result => [result.name, result]));
+  const names = new Set(stages.map(([name]) => name));
+  for (const item of [...list.children]) {
+    if (!names.has(item.dataset.name)) item.remove();
+  }
+  const existing = new Map([...list.children].map(item => [item.dataset.name, item]));
   document.getElementById("transferSummary").textContent = job.total ?
     `${job.running ? words.transferPending : words.transferFinished}: ${job.completed}/${job.total} ${words.transferCount}` : "";
-  for (const [name, stage] of Object.entries(job.stages)) {
-    const result = job.results.find(item => item.name === name);
-    const item = document.createElement("li");
+  stages.forEach(([name, stage], index) => {
+    const result = resultByName.get(name);
+    let item = existing.get(name);
+    if (!item) {
+      item = document.createElement("li");
+      item.dataset.name = name;
+    }
     const detail = result?.outcome === "uncertain" ? words.uncertainMoveDetail
       : result?.outcome === "failed" ? words.failedCopyDetail : "";
-    item.textContent = `${name} — ${words.stages[stage] || stage}${detail ? ` — ${detail}` : ""}`;
-    list.append(item);
+    const description = `${name} — ${words.stages[stage] || stage}${detail ? ` — ${detail}` : ""}`;
+    if (item.textContent !== description) item.textContent = description;
+    if (list.children[index] !== item) list.insertBefore(item, list.children[index] || null);
+  });
+  if (job.kind === "move") {
+    if (job.running && activeMoveJobId === null) {
+      activeMoveJobId = job.id;
+      seenVerifiedMoveNames = new Set();
+    }
+    if (job.id === activeMoveJobId) {
+      const newlyVerified = (job.results || [])
+        .filter(result => result.outcome === "verified" && !seenVerifiedMoveNames.has(result.name))
+        .map(result => result.name);
+      for (const name of newlyVerified) seenVerifiedMoveNames.add(name);
+      removeVerifiedVideos(newlyVerified);
+      if (!job.running && job.id !== handledMoveJobId) {
+        handledMoveJobId = job.id;
+        activeMoveJobId = null;
+        seenVerifiedMoveNames = new Set();
+        const selected = new Set(Object.keys(job.stages || {}));
+        for (const box of document.querySelectorAll('#videos input:checked')) {
+          if (selected.has(box.value)) box.checked = false;
+        }
+        updateSelectAll();
+        refreshVideos();
+      }
+    }
   }
-  updateCopyAvailability();
+  updateMutationAvailability();
 }
 
 async function refreshTransfers() {
+  if (transferRefreshInFlight) return;
+  transferRefreshInFlight = true;
   try {
     const response = await fetch("/api/transfers", { cache: "no-store" });
     if (!response.ok) throw new Error("transfer status request failed");
     const job = await response.json();
+    if (activeMoveJobId !== null && job.id !== activeMoveJobId) return;
     const json = JSON.stringify(job);
     if (json !== lastTransferJson) {
       transferJob = job;
@@ -387,28 +450,43 @@ async function refreshTransfers() {
     }
   } catch (_) {
     document.getElementById("transferSummary").textContent = labels[language].transferError;
+  } finally {
+    transferRefreshInFlight = false;
   }
 }
 
 async function refreshVideos() {
   const folder = document.getElementById("phoneFolder").value;
   const revision = videoRevision;
+  const requestId = ++videoRequestId;
   try {
     const response = await fetch(`/api/videos?folder=${encodeURIComponent(folder)}`, { cache: "no-store" });
     if (!response.ok) throw new Error("videos request failed");
     const payload = await response.json();
-    if (revision !== videoRevision || folder !== document.getElementById("phoneFolder").value) return;
+    if (requestId !== videoRequestId || revision !== videoRevision
+        || folder !== document.getElementById("phoneFolder").value) return;
     currentVideos = payload.videos;
     renderVideos(currentVideos);
   } catch (_) {
-    document.getElementById("videosMessage").textContent = labels[language].videosError;
+    if (requestId === videoRequestId) {
+      document.getElementById("videosMessage").textContent = labels[language].videosError;
+    }
   }
 }
 
 function acceptCameraStatus(status, force = false) {
   if (!force && (pendingCamera > 0 || (status.generation ?? 0) < (current.generation ?? 0))) return;
+  const previous = current;
+  const hadStatus = receivedCameraStatus;
+  receivedCameraStatus = true;
   current = status;
   renderCamera(current);
+  if (hadStatus && status.state === "idle" && status.confirmed_state === "idle"
+      && status.verification_enabled && !status.busy
+      && (previous.busy || previous.state !== "idle" || previous.confirmed_state !== "idle"
+          || (status.generation ?? 0) > (previous.generation ?? 0))) {
+    refreshVideos();
+  }
 }
 
 async function refresh(force = false) {

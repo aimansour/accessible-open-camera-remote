@@ -212,5 +212,6 @@ created only random test MP4s, deleted three, copied and moved four with
 SHA-256 and Android MediaStore checks, and started/stopped a short recording
 during the move. The new recording remains on the phone for review. The
 rebuilt Windows package suite reported 144 passed and 5 skipped. The packaged
-`app.js` SHA-256 matched the source. User NVDA acceptance of this exact release
-is still outstanding.
+`app.js` SHA-256 matched the source. After publication, the user confirmed
+that NVDA works correctly with v0.1.3. This is a direct user observation;
+no separate automated NVDA measurement was made for the release.

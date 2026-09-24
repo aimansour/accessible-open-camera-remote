@@ -17,4 +17,4 @@ SHA-256 of the ZIP: `5252C882391F1C822E32831EB446505FA786CBF3104C1189D1D4A495E33
 
 The Windows package was built locally and its suite reported 144 passed, 5 skipped. The optional Samsung SM-A155F / Android 16 phone gate passed with random test videos: three deleted, four copied and moved, with SHA-256, phone-file, and MediaStore checks. A short camera recording was started and stopped during the move. No personal phone video was changed by that gate.
 
-The user's earlier NVDA and USB-C microphone checks passed on a prior build. This exact release has not been separately evaluated by the user with NVDA. Other phones, save folders, and Open Camera versions remain unverified. If a camera or file result is uncertain, inspect it before acting again; toggle keys are not retried automatically.
+The user confirmed that NVDA works correctly with this release. USB-C microphone audio was confirmed in an earlier session. Other phones, save folders, and Open Camera versions remain unverified. If a camera or file result is uncertain, inspect it before acting again; toggle keys are not retried automatically.

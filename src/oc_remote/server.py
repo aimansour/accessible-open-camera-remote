@@ -64,6 +64,16 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
         if diagnostics is not None:
             diagnostics.record(event)
 
+    def note_selected_files(folder, entries):
+        observer = getattr(controller, "note_selected_files", None)
+        if observer is not None:
+            observer(folder, entries)
+
+    def note_file_change(folder, old_name, new_entry=None, uncertain=False):
+        observer = getattr(controller, "note_file_change", None)
+        if observer is not None:
+            observer(folder, old_name, new_entry, uncertain=uncertain)
+
     def require_idle_for_mutation():
         camera = controller.status()
         if (camera.confirmed_state is not CaptureState.IDLE or not camera.verification_enabled
@@ -182,6 +192,7 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
                 raise web.HTTPBadRequest(text="A selected video is no longer available as completed")
             entries = [available[name] for name in names]
             require_expected_entries(entries, payload.get("expected_entries"))
+            note_selected_files(folder, entries)
             if camera.verification_enabled:
                 require_idle_for_mutation()
         except BaseException:
@@ -246,6 +257,7 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
                 raise web.HTTPBadRequest(text="Choose one video and a new name")
             entry = await selected_entry(folder, name)
             require_expected_entries([entry], payload.get("expected_entries"))
+            note_selected_files(folder, [entry])
             require_idle_for_mutation()
             try:
                 result = await rename_one(controller.adb, entry, folder, new_stem)
@@ -255,10 +267,12 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
             except ValueError:
                 raise web.HTTPBadRequest(text="Invalid new video name")
             except (UncertainMutation, MediaIndexError, AdbFailure):
+                note_file_change(folder, name, uncertain=True)
                 controller.tone.failure()
                 record("rename_uncertain")
                 raise web.HTTPConflict(text="Rename result uncertain; inspect the phone")
             app[VERIFIED_CATALOG_KEY].pop(folder, None)
+            note_file_change(folder, name, result)
             controller.tone.success()
             record("rename_verified")
             return web.json_response(asdict(result))
@@ -281,6 +295,7 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
                 raise web.HTTPBadRequest(text="Confirm the exact selected video names")
             entries = await selected_entries(folder, names)
             require_expected_entries(entries, payload.get("expected_entries"))
+            note_selected_files(folder, entries)
             require_idle_for_mutation()
         except BaseException:
             app[FILE_LOCK_KEY].release()
@@ -314,8 +329,10 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
                         try:
                             await delete_one(controller.adb, entry, folder, name,
                                              progress=lambda stage, name=name: progress(name, stage))
+                            note_file_change(folder, name)
                             job["results"].append({"name": name, "outcome": "verified"})
                         except Exception:
+                            note_file_change(folder, name, uncertain=True)
                             progress(name, "uncertain")
                             job["results"].append({"name": name, "outcome": "uncertain"})
                         job["completed"] += 1
@@ -358,6 +375,7 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
                 raise web.HTTPBadRequest(text="Choose videos and an absolute PC folder")
             entries = await selected_entries(folder, names)
             require_expected_entries(entries, payload.get("expected_entries"))
+            note_selected_files(folder, entries)
             require_idle_for_mutation()
         except Exception:
             app[FILE_LOCK_KEY].release()
@@ -379,9 +397,14 @@ def create_app(controller, token: str, diagnostics=None) -> web.Application:
                         job["stages"][name] = "copying"
                         try:
                             result = await move_one(controller.adb, entry, folder, destination)
+                            if result.outcome == "verified":
+                                note_file_change(folder, name)
+                            elif result.outcome == "uncertain":
+                                note_file_change(folder, name, uncertain=True)
                             job["results"].append(asdict(result))
                             job["stages"][name] = result.outcome
                         except Exception:
+                            note_file_change(folder, name, uncertain=True)
                             job["stages"][name] = "uncertain"
                             job["results"].append({"name": name, "outcome": "uncertain", "destination": None,
                                                    "message": "Move result uncertain; inspect phone and PC"})

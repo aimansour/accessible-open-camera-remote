@@ -94,6 +94,34 @@ class CameraController:
         return CameraStatus(self._state, self._verification_enabled, self._busy,
                             self._message, self._confirmed_state, self._generation)
 
+    def _matches_recording_folder(self, folder: str) -> bool:
+        def canonical(value: str) -> str:
+            return ("/sdcard/" + value[len("/storage/emulated/0/"):]
+                    if value.startswith("/storage/emulated/0/") else value)
+
+        return canonical(folder) == canonical(self._phone_folder)
+
+    def note_selected_files(self, folder: str, entries: list[VideoEntry]) -> None:
+        if not self._matches_recording_folder(folder):
+            return
+        for baseline in (self._latest_baseline, self._active_baseline):
+            if baseline is not None:
+                baseline.update({entry.name: entry for entry in entries})
+
+    def note_file_change(self, folder: str, old_name: str,
+                         new_entry: VideoEntry | None = None, uncertain: bool = False) -> None:
+        if not self._matches_recording_folder(folder):
+            return
+        if uncertain:
+            self._latest_baseline = None
+            self._active_baseline = None
+            return
+        for baseline in (self._latest_baseline, self._active_baseline):
+            if baseline is not None:
+                baseline.pop(old_name, None)
+                if new_entry is not None:
+                    baseline[new_entry.name] = new_entry
+
     async def start_session(self) -> CameraStatus:
         return await self.start_verification()
 

@@ -449,6 +449,66 @@ async def test_delete_rejects_file_identity_from_another_folder(client):
     assert not http.server.app[FILE_LOCK_KEY].locked()
 
 
+async def test_renamed_old_video_cannot_prove_a_new_recording(monkeypatch):
+    from oc_remote.catalog import VideoEntry
+    from oc_remote.recording_evidence import finalized_since as real_finalized_since
+
+    class Adb:
+        def __init__(self):
+            self.name = "old.mp4"
+            self.keys = []
+
+        async def run(self, *args, **kwargs):
+            if "find" in args:
+                return f"{self.name}\x0020\x001.0\x00".encode()
+            if "window" in args:
+                return b"mCurrentFocus=net.sourceforge.opencamera/.MainActivity\n"
+            return b"mWakefulness=Awake\n"
+
+        async def dump_ui(self):
+            return (b'<hierarchy><node package="net.sourceforge.opencamera" '
+                    b'resource-id="net.sourceforge.opencamera:id/take_photo" '
+                    b'content-desc="Start recording video"/></hierarchy>')
+
+        async def press(self, key):
+            self.keys.append(key)
+
+    class Tone:
+        def __init__(self):
+            self.events = []
+
+        def success(self):
+            self.events.append("success")
+
+        def failure(self):
+            self.events.append("failure")
+
+    async def renamed(adb, entry, folder, new_stem):
+        assert entry.name == "old.mp4"
+        adb.name = "renamed-old.mp4"
+        return VideoEntry(adb.name, 20, 1.0)
+
+    async def quick_finalized(adb, folder, baseline, deadline):
+        return await real_finalized_since(adb, folder, baseline, 0.8)
+
+    monkeypatch.setattr("oc_remote.server.rename_one", renamed)
+    monkeypatch.setattr("oc_remote.camera.finalized_since", quick_finalized)
+    adb, tone = Adb(), Tone()
+    controller = CameraController(adb, tone)
+    await controller.start_session()
+    async with TestClient(TestServer(create_app(controller, "valid"))) as http:
+        response = await http.post("/api/rename", json={
+            "name": "old.mp4", "new_stem": "renamed-old",
+        }, headers=auth(http))
+        assert response.status == 200
+        start = controller.submit(CameraAction.START)
+        stop = controller.submit(CameraAction.STOP)
+        await asyncio.wait_for(asyncio.gather(start, stop), 3)
+    assert adb.keys == [24, 24]
+    assert controller.status().state is CaptureState.UNKNOWN
+    assert tone.events == ["success", "failure"]
+
+
 async def test_batch_delete_requires_exact_confirmed_selection(client):
     http, controller = client
 

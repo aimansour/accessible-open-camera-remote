@@ -1,6 +1,7 @@
 """Opt-in batch API gate; touches only random videos created here."""
 
 import asyncio
+import hashlib
 import os
 import shlex
 import shutil
@@ -21,7 +22,7 @@ from oc_remote.state import CaptureState
 
 
 @pytest.mark.skipif(os.getenv("OC_DEVICE_TEST") != "1", reason="device test is opt-in")
-async def test_batch_delete_and_move_only_created_videos(tmp_path):
+async def test_batch_delete_copy_and_move_only_created_videos(tmp_path):
     serial = os.getenv("OC_DEVICE_SERIAL")
     executable, ffmpeg = shutil.which("adb"), shutil.which("ffmpeg")
     if not serial or not executable or not ffmpeg:
@@ -48,7 +49,7 @@ async def test_batch_delete_and_move_only_created_videos(tmp_path):
     controller = Controller()
     marker = f"oc_remote_batch_test_{uuid4().hex}"
     delete_names = [f"{marker}_delete_{i}.mp4" for i in range(3)]
-    move_names = [f"{marker}_move_{i}.mp4" for i in range(2)]
+    move_names = [f"{marker}_move_{i}.mp4" for i in range(4)]
     names = delete_names + move_names
 
     async def scan(name):
@@ -99,16 +100,39 @@ async def test_batch_delete_and_move_only_created_videos(tmp_path):
                 assert not await remote_exists(controller.adb, f"{DEFAULT_PHONE_FOLDER}/{name}")
                 assert await query_media_row(controller.adb, DEFAULT_PHONE_FOLDER, name) is None
 
+            copied = await http.post("/api/copy", json={
+                "names": move_names, "destination": str(tmp_path / "copied"),
+            }, headers=headers)
+            assert copied.status == 202
+            copy_job = await wait_job(http, "/api/transfers")
+            assert copy_job["kind"] == "copy"
+            assert copy_job["completed"] == copy_job["total"] == 4
+            assert {result["name"]: result["outcome"] for result in copy_job["results"]} == {
+                name: "verified" for name in move_names
+            }
+            assert controller.tone.events == ["success", "success"]
+            for name in move_names:
+                original = (tmp_path / name).read_bytes()
+                pc_copy = (tmp_path / "copied" / name).read_bytes()
+                assert hashlib.sha256(original).digest() == hashlib.sha256(pc_copy).digest()
+                assert await remote_exists(controller.adb, f"{DEFAULT_PHONE_FOLDER}/{name}")
+                assert await query_media_row(controller.adb, DEFAULT_PHONE_FOLDER, name) is not None
+
             moved = await http.post("/api/move", json={
                 "names": move_names, "destination": str(tmp_path / "pc"),
             }, headers=headers)
             assert moved.status == 202
             move_job = await wait_job(http, "/api/transfers")
-            assert move_job["completed"] == move_job["total"] == 2
-            assert [result["outcome"] for result in move_job["results"]] == ["verified", "verified"]
-            assert controller.tone.events == ["success", "success"]
+            assert move_job["kind"] == "move"
+            assert move_job["completed"] == move_job["total"] == 4
+            assert {result["name"]: result["outcome"] for result in move_job["results"]} == {
+                name: "verified" for name in move_names
+            }
+            assert controller.tone.events == ["success", "success", "success"]
             for name in move_names:
                 assert (tmp_path / "pc" / name).is_file()
+                assert hashlib.sha256((tmp_path / name).read_bytes()).digest() == hashlib.sha256(
+                    (tmp_path / "pc" / name).read_bytes()).digest()
                 assert not await remote_exists(controller.adb, f"{DEFAULT_PHONE_FOLDER}/{name}")
                 assert await query_media_row(controller.adb, DEFAULT_PHONE_FOLDER, name) is None
     finally:

@@ -151,3 +151,40 @@ A delayed stale listing was also ignored after a verified deletion. Browser
 errors were empty. The percentage counts files whose deletion check finished;
 it does not estimate bytes or the time remaining. The user has not yet heard
 this updated progress page with NVDA.
+
+## Catalog and transfer follow-up (local build, not published)
+
+On 2026-09-24, the Samsung SM-A155F wireless ADB connection was used to compare
+four 8.44 MB disposable MP4s. Two independent copy rounds took 8.32/7.90 s
+with one worker, 5.51/5.87 s with two, and 5.32/5.42 s with four. Move took
+22.85 s with one worker, 14.70 s with two, and 10.52 s with four. Another
+preflight probe during four-worker move measured 1.36 s for the ADB phone
+checks. The implementation uses two copy workers and four move workers;
+these are measurements on this phone and network, not a universal guarantee.
+
+The opt-in API device gate then created seven new random MP4s. It deleted
+three, copied four to the PC while retaining their phone originals, and moved
+the same four to another PC folder. Every copied/moved PC file matched its
+original SHA-256; all four moved phone paths and MediaStore rows were absent.
+Each batch produced one success tone, and the test cleaned only its own phone
+filenames. The gate passed in 44.73 s.
+
+A live browser session against the updated source service started and stopped
+a short Open Camera recording. After the final idle check, the new
+`VID_20260924_065714.mp4` row appeared without a manual catalog refresh. This
+recording remains on the phone for the user's review. A separate randomly
+named 1,362-byte MP4 was scanned into the catalog, selected alone, and moved
+through the browser. Its row and file-action buttons disappeared while the
+recording row remained. The transfer API reported a verified move, the PC
+copy's SHA-256 matched the test original, and the phone path was absent.
+Browser errors were empty. The updated controls still require the user's
+own NVDA acceptance before publication.
+
+The fresh local Windows package was built successfully, and its bundled
+`app.js` had the same SHA-256 as the source file. The package connected to the
+phone and served a local page with the recording and video controls. Browser
+inspection found the expected native buttons, selection checkboxes, Arabic
+labels, and no browser errors. Selecting then clearing the new recording
+showed then hid its file-action buttons without sending a mutation. With
+`OC_PACKAGE_ROOT` pointing to this build, the test suite reported 138 passed
+and 5 skipped (opt-in device tests). No package was uploaded or published.

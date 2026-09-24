@@ -631,6 +631,10 @@ async def test_batch_move_uses_four_workers_and_updates_each_result(client, monk
     try:
         await asyncio.wait_for(asyncio.gather(*(started[name].wait() for name in names[:4])), 1)
         assert not started[names[4]].is_set()
+        camera = await http.post("/api/camera", json={"action": "start"}, headers=auth(http))
+        assert camera.status == 202
+        assert controller.calls == [CameraAction.START]
+        assert http.server.app[FILE_LOCK_KEY].locked()
         release[names[0]].set()
         await asyncio.wait_for(started[names[4]].wait(), 1)
         job = await (await http.get("/api/transfers")).json()

@@ -269,3 +269,35 @@ async def test_rapid_stop_with_idle_dump_but_no_finalized_video_is_uncertain():
     assert adb.keys == [24, 24]
     assert controller.status().state is CaptureState.UNKNOWN
     assert tone.events == ["failure"]
+
+
+async def test_old_stop_snapshot_cannot_settle_new_start(monkeypatch):
+    snapshot_started = asyncio.Event()
+    release_snapshot = asyncio.Event()
+    adb, tone = FakeAdb(), FakeTone()
+    adb.dumps = [IDLE, IDLE, RECORDING]
+    controller = CameraController(adb, tone)
+    await controller.start_session()
+
+    async def finalized(*args, **kwargs):
+        return True
+
+    async def held_snapshot(*args, **kwargs):
+        snapshot_started.set()
+        await release_snapshot.wait()
+        return {}
+
+    monkeypatch.setattr("oc_remote.camera.finalized_since", finalized)
+    monkeypatch.setattr("oc_remote.camera.snapshot", held_snapshot)
+    start = controller.submit(CameraAction.START)
+    stop = controller.submit(CameraAction.STOP)
+    await asyncio.wait_for(snapshot_started.wait(), 2)
+    newer_start = controller.submit(CameraAction.START)
+    adb.hold.clear()
+    release_snapshot.set()
+    await asyncio.sleep(0.05)
+    assert controller.status().state is CaptureState.RECORDING
+    assert controller.status().busy is True
+    assert tone.events == []
+    adb.hold.set()
+    await asyncio.wait_for(asyncio.gather(start, stop, newer_start), 2)

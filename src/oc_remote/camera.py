@@ -250,15 +250,20 @@ class CameraController:
                             )
                         except (AdbFailure, InvalidListing, ValueError, asyncio.TimeoutError):
                             finalized = False
-                        if captured_generation != self._generation:
+                        if (captured_generation != self._generation or not self._verification_enabled
+                                or self._sender_task is not None):
                             continue
                         if not finalized:
                             self._fail("Recording ended, but a finalized video could not be confirmed")
                             return
                         try:
-                            self._latest_baseline = await snapshot(self.adb, self._phone_folder)
+                            latest_baseline = await snapshot(self.adb, self._phone_folder)
                         except (AdbFailure, InvalidListing, ValueError, asyncio.TimeoutError):
-                            self._latest_baseline = None
+                            latest_baseline = None
+                        if (captured_generation != self._generation or not self._verification_enabled
+                                or self._sender_task is not None):
+                            continue
+                        self._latest_baseline = latest_baseline
                         self._active_baseline = None
                     self._confirmed_state = observed
                     self._message = "Camera state verified"

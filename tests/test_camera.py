@@ -136,6 +136,27 @@ async def test_verification_can_be_stopped_during_dump():
     assert tone.events == []
 
 
+async def test_stopping_verification_cancels_manual_dump_before_it_can_write_state():
+    adb, tone = FakeAdb(), FakeTone()
+    controller = CameraController(adb, tone)
+    await controller.start_session()
+    adb.hold.clear()
+    checking = asyncio.create_task(controller.start_verification())
+    for _ in range(100):
+        if adb.dump_count >= 2:
+            break
+        await asyncio.sleep(0.001)
+    assert adb.dump_count == 2
+    stopped = await controller.stop_verification()
+    assert stopped.state is CaptureState.UNKNOWN
+    assert stopped.verification_enabled is False
+    adb.hold.set()
+    await asyncio.wait_for(checking, 1)
+    assert adb.dump_count == 2
+    assert controller.status().confirmed_state is CaptureState.UNKNOWN
+    assert controller.status().verification_enabled is False
+
+
 async def test_unrecognized_result_never_retries_the_key():
     adb, tone = FakeAdb(IDLE, xml("Stop recording video", "different")), FakeTone()
     controller = CameraController(adb, tone)

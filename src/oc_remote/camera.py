@@ -81,6 +81,8 @@ class CameraController:
         self._pending: deque[tuple[int, CameraAction]] = deque()
         self._sender_task: asyncio.Task | None = None
         self._verifier_task: asyncio.Task | None = None
+        self._manual_verification_task: asyncio.Task | None = None
+        self._verification_epoch = 0
         self._settled = asyncio.Event()
         self._settled.set()
 
@@ -96,33 +98,52 @@ class CameraController:
         return await self.start_verification()
 
     async def start_verification(self) -> CameraStatus:
-        if self._busy:
+        task = asyncio.current_task()
+        if (self._busy or (self._manual_verification_task is not None
+                           and not self._manual_verification_task.done())):
             raise CommandBusy("A camera command is still being checked")
+        self._manual_verification_task = task
+        self._verification_epoch += 1
+        epoch = self._verification_epoch
         self._verification_enabled = True
         self._state = CaptureState.UNKNOWN
         self._confirmed_state = CaptureState.UNKNOWN
         self._message = "Reading Open Camera state"
         try:
-            self._state = classify(parse_dump(await self.adb.dump_ui()))
-            self._confirmed_state = self._state
+            observed = classify(parse_dump(await self.adb.dump_ui()))
             try:
-                self._latest_baseline = await snapshot(self.adb, self._phone_folder)
+                latest_baseline = await snapshot(self.adb, self._phone_folder)
             except (AdbFailure, InvalidListing, ValueError, asyncio.TimeoutError):
-                self._latest_baseline = None
+                latest_baseline = None
+            if epoch != self._verification_epoch or not self._verification_enabled:
+                return self.status()
+            self._state = observed
+            self._confirmed_state = observed
+            self._latest_baseline = latest_baseline
             self._active_baseline = (
-                self._latest_baseline if self._state in (CaptureState.RECORDING, CaptureState.PAUSED)
+                latest_baseline if observed in (CaptureState.RECORDING, CaptureState.PAUSED)
                 else None
             )
             self._message = (
                 "Open Camera is in photo mode or its recording state could not be recognized"
-                if self._state is CaptureState.UNKNOWN else "Camera state verified"
+                if observed is CaptureState.UNKNOWN else "Camera state verified"
             )
+        except asyncio.CancelledError:
+            if epoch != self._verification_epoch:
+                return self.status()
+            raise
         except (AdbFailure, InvalidDump, asyncio.TimeoutError):
+            if epoch != self._verification_epoch or not self._verification_enabled:
+                return self.status()
             self._message = "Could not read Open Camera; check the phone and connection"
+        finally:
+            if self._manual_verification_task is task:
+                self._manual_verification_task = None
         self._record("camera_verified" if self._state is not CaptureState.UNKNOWN else "camera_uncertain")
         return self.status()
 
     async def stop_verification(self) -> CameraStatus:
+        self._verification_epoch += 1
         self._verification_enabled = False
         self._state = CaptureState.UNKNOWN
         self._confirmed_state = CaptureState.UNKNOWN
@@ -130,7 +151,7 @@ class CameraController:
         self._active_baseline = None
         self._message = "Verification is off; phone camera controls are disabled"
         self._pending.clear()
-        tasks = (self._sender_task, self._verifier_task)
+        tasks = (self._manual_verification_task, self._sender_task, self._verifier_task)
         for task in tasks:
             if task is not None and not task.done():
                 task.cancel()
